@@ -32,13 +32,14 @@ final class RoomStore {
         let descriptor = FetchDescriptor<Home>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
         let fetched = (try? modelContext.fetch(descriptor)) ?? []
         homes = fetched.map { home in
-            let models = home.rooms
+            let raw = home.rooms
                 .sorted { $0.sortIndex < $1.sortIndex }
                 .compactMap { room -> RoomModel? in
                     guard var rm = room.currentVersion?.snapshot?.room else { return nil }
                     rm.name = room.name
                     return rm
                 }
+            let models = HomeGeometry.straightened(raw)
             let area = models.reduce(0.0) { $0 + PlanGeometry.area(of: $1) }
             return HomeSummary(id: home.id, name: home.name, createdAt: home.createdAt,
                                roomCount: models.count, totalArea: area, rooms: models)
@@ -47,21 +48,30 @@ final class RoomStore {
 
     func homeModel(for id: UUID) -> HomeModel? {
         guard let home = home(with: id) else { return nil }
-        let placed = home.rooms
+        let entries = home.rooms
             .sorted { $0.sortIndex < $1.sortIndex }
-            .compactMap { room -> PlacedRoom? in
+            .compactMap { room -> (Room, RoomModel)? in
                 guard var rm = room.currentVersion?.snapshot?.room else { return nil }
                 rm.name = room.name                    // Room.name is the source of truth
-                return PlacedRoom(id: room.id, name: room.name, kind: rm.kind,
-                                  sortIndex: room.sortIndex, room: rm, placement: .identity,
-                                  versionId: room.currentVersion?.id)
+                return (room, rm)
             }
+        let straight = HomeGeometry.straightened(entries.map { $0.1 })
+        let placed = zip(entries, straight).map { entry, geom in
+            PlacedRoom(id: entry.0.id, name: entry.0.name, kind: geom.kind,
+                       sortIndex: entry.0.sortIndex, room: geom, placement: .identity,
+                       versionId: entry.0.currentVersion?.id)
+        }
         return HomeModel(id: home.id, name: home.name, createdAt: home.createdAt, rooms: placed)
     }
 
     func roomModel(for id: UUID) -> RoomModel? {
         guard let room = room(with: id), var rm = room.currentVersion?.snapshot?.room else { return nil }
         rm.name = room.name
+        // Apply the home's straightening so a single room reads upright too.
+        if let home = room.home {
+            let homeRooms = home.rooms.compactMap { $0.currentVersion?.snapshot?.room }
+            return HomeGeometry.transform(rm, by: HomeGeometry.straighteningPose(of: homeRooms))
+        }
         return rm
     }
 

@@ -42,6 +42,57 @@ public enum HomeGeometry {
         out.floorOutline = room.floorOutline?.map(pose.apply(to:))
         return out
     }
+
+    /// Dominant wall skew of a set of rooms, radians in [-π/4, π/4]. Length-weighted
+    /// circular mean over the 90°-periodic wall orientation (×4 → full circle → /4).
+    public static func dominantAngle(of rooms: [RoomModel]) -> Double {
+        var sx = 0.0, sy = 0.0
+        for room in rooms {
+            for wall in room.walls {
+                let d = wall.end - wall.start
+                let len = d.length
+                guard len > 1e-6 else { continue }
+                let a = atan2(d.z, d.x) * 4
+                sx += len * cos(a)
+                sy += len * sin(a)
+            }
+        }
+        if sx == 0, sy == 0 { return 0 }
+        return atan2(sy, sx) / 4
+    }
+
+    /// Bounding-box centre of all wall endpoints across the rooms.
+    public static func bboxCenter(of rooms: [RoomModel]) -> Point2D {
+        var minX = Double.greatestFiniteMagnitude, maxX = -Double.greatestFiniteMagnitude
+        var minZ = minX, maxZ = maxX
+        for room in rooms {
+            for wall in room.walls {
+                for p in [wall.start, wall.end] {
+                    minX = Swift.min(minX, p.x); maxX = Swift.max(maxX, p.x)
+                    minZ = Swift.min(minZ, p.z); maxZ = Swift.max(maxZ, p.z)
+                }
+            }
+        }
+        guard minX <= maxX else { return Point2D(x: 0, z: 0) }
+        return Point2D(x: (minX + maxX) / 2, z: (minZ + maxZ) / 2)
+    }
+
+    /// Rigid pose that rotates a home about its centre so walls align to the axes.
+    public static func straighteningPose(of rooms: [RoomModel]) -> Pose2D {
+        let theta = dominantAngle(of: rooms)
+        guard abs(theta) > 1e-4 else { return .identity }
+        let c = bboxCenter(of: rooms)
+        let a = -theta
+        let rc = Pose2D(rotation: a).apply(to: c)   // R_a(c)
+        return Pose2D(rotation: a, translation: Point2D(x: c.x - rc.x, z: c.z - rc.z))
+    }
+
+    /// Rooms re-expressed with the whole home straightened to the wall axes.
+    public static func straightened(_ rooms: [RoomModel]) -> [RoomModel] {
+        let pose = straighteningPose(of: rooms)
+        if pose == .identity { return rooms }
+        return rooms.map { transform($0, by: pose) }
+    }
 }
 
 /// One room placed within a home, with its source version. Pure; assembled on read.

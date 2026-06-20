@@ -77,7 +77,7 @@ final class HomeScanner {
             do {
                 let captured = try await RoomBuilder(options: [.beautifyObjects])
                     .capturedRoom(from: data)
-                let rooms = RoomModelConverter.splitRooms(from: captured)
+                let rooms = HomeGeometry.straightened(RoomModelConverter.splitRooms(from: captured))
                 state = .review(RoomNaming.assignNames(rooms))
             } catch {
                 state = .failed("Tarama işlenemedi. Lütfen evi yavaşça, tüm odaları kapsayarak tekrar tarayın.")
