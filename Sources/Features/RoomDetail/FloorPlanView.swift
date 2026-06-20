@@ -133,7 +133,7 @@ struct FloorPlanView: View {
                                           includeObjects: showFurniture) else { return }
         let t = transform(base: base, size: size)
 
-        drawGrid(context, size: size, t: t)
+        FloorPlanRenderer.drawGrid(context, size: size, t: t, dark: dark)
 
         let ink = PlanInk(paper: cPaper, floor: cFloor, wall: cWall, door: cDoor, window: cWindow)
         FloorPlanRenderer.drawRoom(room, into: context, t: t, ink: ink, showFurniture: showFurniture)
@@ -170,71 +170,6 @@ struct FloorPlanView: View {
         context.draw(resolved, at: pillCenter, anchor: .center)
     }
 
-    // MARK: - Dynamic metric grid
-
-    /// Metric "graph paper" whose cell size adapts to zoom: 1 m → 50 → 10 → 5 → 2 → 1 cm
-    /// as you zoom in. The finest tier fades in smoothly; the coarser tier stays solid.
-    private func drawGrid(_ context: GraphicsContext, size: CGSize, t: PlanGeometry.Transform) {
-        let ppm = t.scale
-        guard ppm > 0 else { return }
-        let steps: [Double] = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10]
-        let target: CGFloat = 20
-
-        guard let i = steps.firstIndex(where: { CGFloat($0) * ppm >= target }) else { return }
-        let minor = steps[i]
-        let major = i + 1 < steps.count ? steps[i + 1] : minor * 5
-        let minorSpacing = CGFloat(minor) * ppm
-        let fade = Double(min(max(minorSpacing / target - 1.0, 0), 1))
-
-        let tl = t.unapply(.zero)
-        let br = t.unapply(CGPoint(x: size.width, y: size.height))
-        let minX = min(tl.x, br.x), maxX = max(tl.x, br.x)
-        let minZ = min(tl.z, br.z), maxZ = max(tl.z, br.z)
-        let ink = dark ? Color.white : Brand.ink
-
-        gridLines(context, step: minor, minX: minX, maxX: maxX, minZ: minZ, maxZ: maxZ, t: t,
-                  color: ink.opacity((dark ? 0.06 : 0.05) * fade), width: 0.5)
-        gridLines(context, step: major, minX: minX, maxX: maxX, minZ: minZ, maxZ: maxZ, t: t,
-                  color: ink.opacity(dark ? 0.13 : 0.09), width: 0.75)
-
-        let cell = fade > 0.35 ? minor : major
-        let resolved = context.resolve(
-            Text(gridUnitLabel(cell))
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(Brand.textFaint)
-        )
-        context.draw(resolved, at: CGPoint(x: 14, y: size.height - 12), anchor: .bottomLeading)
-    }
-
-    private func gridLines(_ context: GraphicsContext, step: Double,
-                           minX: Double, maxX: Double, minZ: Double, maxZ: Double,
-                           t: PlanGeometry.Transform, color: Color, width: CGFloat) {
-        guard step > 0 else { return }
-        let span = max(maxX - minX, maxZ - minZ)
-        guard span / step <= 500 else { return }
-        let style = StrokeStyle(lineWidth: width)
-        var x = (minX / step).rounded(.down) * step
-        while x <= maxX {
-            var p = Path()
-            p.move(to: t.apply(Point2D(x: x, z: minZ)))
-            p.addLine(to: t.apply(Point2D(x: x, z: maxZ)))
-            context.stroke(p, with: .color(color), style: style)
-            x += step
-        }
-        var z = (minZ / step).rounded(.down) * step
-        while z <= maxZ {
-            var p = Path()
-            p.move(to: t.apply(Point2D(x: minX, z: z)))
-            p.addLine(to: t.apply(Point2D(x: maxX, z: z)))
-            context.stroke(p, with: .color(color), style: style)
-            z += step
-        }
-    }
-
-    private func gridUnitLabel(_ meters: Double) -> String {
-        if meters < 1 { return "\(Int((meters * 100).rounded())) cm" }
-        return meters == meters.rounded() ? "\(Int(meters)) m" : String(format: "%.1f m", meters)
-    }
 }
 
 private extension CGFloat {

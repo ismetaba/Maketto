@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// F0 home — the room library. "Odalarım" with warm cards and a bottom bar.
-struct RoomListView: View {
+/// Home library — "Evlerim": every home you've scanned, with a whole-home thumbnail.
+struct HomeListView: View {
     @Environment(RoomStore.self) private var store
     @Environment(Router.self) private var router
 
@@ -11,16 +11,14 @@ struct RoomListView: View {
 
             VStack(spacing: 0) {
                 header
-                if store.rooms.isEmpty {
+                if store.homes.isEmpty {
                     emptyState
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 14) {
-                            ForEach(store.rooms) { summary in
-                                Button {
-                                    router.push(.roomDetail(summary.id))
-                                } label: {
-                                    RoomRow(summary: summary)
+                            ForEach(store.homes) { home in
+                                Button { router.push(.homeDetail(home.id)) } label: {
+                                    HomeRow(home: home)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -41,12 +39,10 @@ struct RoomListView: View {
         HStack(alignment: .bottom) {
             VStack(alignment: .leading, spacing: 3) {
                 Overline("Maketto", color: Brand.clay)
-                Text("Odalarım")
-                    .font(.display(34))
-                    .foregroundStyle(Brand.textPrimary)
+                Text("Evlerim").font(.display(34)).foregroundStyle(Brand.textPrimary)
             }
             Spacer()
-            Button { router.push(.scan) } label: {
+            Button { router.push(.scanHome) } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(Brand.bone100)
@@ -63,33 +59,25 @@ struct RoomListView: View {
         VStack(spacing: 0) {
             Spacer()
             MakettoLogo(size: 52)
-            Text("Henüz maket yok")
-                .font(.display(33))
-                .foregroundStyle(Brand.textPrimary)
-                .padding(.top, 22)
-            Text("Odanızı yaklaşık 30 saniyede tarayın. Gerisini Maketto halleder.")
-                .font(.system(size: 16))
-                .foregroundStyle(Brand.textSecondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 48)
-                .padding(.top, 10)
-            Button { router.push(.scan) } label: {
-                Label("Taramayı Başlat", systemImage: "viewfinder")
+            Text("Henüz ev yok")
+                .font(.display(33)).foregroundStyle(Brand.textPrimary).padding(.top, 22)
+            Text("Tüm evinizi yaklaşık birkaç dakikada tarayın. Maketto odalara böler.")
+                .font(.system(size: 16)).foregroundStyle(Brand.textSecondary)
+                .multilineTextAlignment(.center).padding(.horizontal, 48).padding(.top, 10)
+            Button { router.push(.scanHome) } label: {
+                Label("Evi Tara", systemImage: "viewfinder")
             }
-            .buttonStyle(ClayButtonStyle())
-            .padding(.top, 28)
-            Overline("LiDAR · iPhone Pro", color: Brand.textFaint)
-                .padding(.top, 18)
-            Spacer()
-            Spacer()
+            .buttonStyle(ClayButtonStyle()).padding(.top, 28)
+            Overline("LiDAR · iPhone Pro", color: Brand.textFaint).padding(.top, 18)
+            Spacer(); Spacer()
         }
         .frame(maxWidth: .infinity)
     }
 
     private var bottomBar: some View {
         HStack(spacing: 0) {
-            tab("Odalar", "house.fill", active: true) {}
-            tab("Tara", "viewfinder", active: false) { router.push(.scan) }
+            tab("Evler", "house.fill", active: true) {}
+            tab("Tara", "viewfinder", active: false) { router.push(.scanHome) }
             tab("Profil", "person", active: false) {}
         }
         .padding(.top, 12)
@@ -101,10 +89,8 @@ struct RoomListView: View {
     private func tab(_ title: String, _ icon: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 21, weight: active ? .semibold : .regular))
-                Text(title)
-                    .font(.system(size: 10, weight: active ? .bold : .medium))
+                Image(systemName: icon).font(.system(size: 21, weight: active ? .semibold : .regular))
+                Text(title).font(.system(size: 10, weight: active ? .bold : .medium))
             }
             .foregroundStyle(active ? Brand.evergreen : Brand.textFaint)
             .frame(maxWidth: .infinity)
@@ -114,7 +100,7 @@ struct RoomListView: View {
 }
 
 #Preview {
-    NavigationStack { RoomListView() }
+    NavigationStack { HomeListView() }
         .environment(RoomStore.preview)
         .environment(Router())
 }

@@ -7,11 +7,13 @@ struct RootView: View {
     var body: some View {
         @Bindable var router = router
         NavigationStack(path: $router.path) {
-            RoomListView()
+            HomeListView()
                 .navigationDestination(for: Route.self) { route in
                     switch route {
-                    case .scan:
-                        ScanScreen()
+                    case .scanHome:
+                        HomeScanScreen()
+                    case .homeDetail(let id):
+                        HomeDetailView(homeID: id)
                     case .roomDetail(let id):
                         RoomDetailView(roomID: id)
                     }

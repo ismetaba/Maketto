@@ -38,8 +38,21 @@ enum RoomModelConverter {
             openings: openings,
             detectedObjects: objects,
             floorOutline: outline,
-            source: .roomplan
+            source: .roomplan,
+            kind: roomKind(of: captured)
         )
+    }
+
+    /// Map RoomPlan's room section label to our RoomKind (first section wins).
+    static func roomKind(of captured: CapturedRoom) -> RoomKind {
+        switch captured.sections.first?.label {
+        case .livingRoom: return .livingRoom
+        case .bedroom: return .bedroom
+        case .bathroom: return .bathroom
+        case .kitchen: return .kitchen
+        case .diningRoom: return .diningRoom
+        default: return .unidentified
+        }
     }
 
     // MARK: - Walls

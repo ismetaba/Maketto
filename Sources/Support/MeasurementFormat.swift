@@ -17,4 +17,9 @@ enum MeasurementFormat {
     static func metersAndCentimeters(_ value: Double) -> String {
         "\(meters(value)) · \(centimeters(value))"
     }
+
+    /// "12.4 m²"
+    static func squareMeters(_ value: Double) -> String {
+        String(format: "%.1f m²", value)
+    }
 }

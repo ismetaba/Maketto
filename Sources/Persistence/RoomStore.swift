@@ -2,125 +2,154 @@ import Foundation
 import SwiftData
 import Observation
 
-/// Lightweight value summary for list cells — views never touch @Model objects.
-struct RoomSummary: Identifiable, Hashable, Sendable {
+/// Lightweight value summary for the home library — views never touch @Model rows.
+struct HomeSummary: Identifiable, Hashable, Sendable {
     let id: UUID
     let name: String
     let createdAt: Date
-    let wallCount: Int
-    let thumbnail: Data?
-    /// Decoded plan for rendering a library thumbnail.
-    let plan: RoomModel?
+    let roomCount: Int
+    let totalArea: Double
+    /// Rooms in the shared home frame, for the whole-home thumbnail.
+    let rooms: [RoomModel]
 }
 
-/// Hides SwiftData behind a small observable API. `rooms` is a stored,
-/// observable property refreshed after every mutation so SwiftUI updates.
+/// Hides SwiftData behind a small observable API. `homes` is a stored, observable
+/// property refreshed after every mutation so SwiftUI updates.
 @MainActor
 @Observable
 final class RoomStore {
     private let modelContext: ModelContext
-
-    private(set) var rooms: [RoomSummary] = []
+    private(set) var homes: [HomeSummary] = []
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
-        _ = defaultHome          // ensure a home exists
         refresh()
     }
 
     // MARK: - Reads
 
     func refresh() {
-        let descriptor = FetchDescriptor<Room>(
-            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-        )
+        let descriptor = FetchDescriptor<Home>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
         let fetched = (try? modelContext.fetch(descriptor)) ?? []
-        rooms = fetched.map { room in
-            let model = room.currentVersion?.snapshot?.room
-            return RoomSummary(
-                id: room.id,
-                name: room.name,
-                createdAt: room.createdAt,
-                wallCount: model?.walls.count ?? 0,
-                thumbnail: room.currentVersion?.thumbnail,
-                plan: model
-            )
+        homes = fetched.map { home in
+            let models = home.rooms
+                .sorted { $0.sortIndex < $1.sortIndex }
+                .compactMap { room -> RoomModel? in
+                    guard var rm = room.currentVersion?.snapshot?.room else { return nil }
+                    rm.name = room.name
+                    return rm
+                }
+            let area = models.reduce(0.0) { $0 + PlanGeometry.area(of: $1) }
+            return HomeSummary(id: home.id, name: home.name, createdAt: home.createdAt,
+                               roomCount: home.rooms.count, totalArea: area, rooms: models)
         }
+    }
+
+    func homeModel(for id: UUID) -> HomeModel? {
+        guard let home = home(with: id) else { return nil }
+        let placed = home.rooms
+            .sorted { $0.sortIndex < $1.sortIndex }
+            .compactMap { room -> PlacedRoom? in
+                guard var rm = room.currentVersion?.snapshot?.room else { return nil }
+                rm.name = room.name                    // Room.name is the source of truth
+                return PlacedRoom(id: room.id, name: room.name, kind: rm.kind,
+                                  sortIndex: room.sortIndex, room: rm, placement: .identity,
+                                  versionId: room.currentVersion?.id)
+            }
+        return HomeModel(id: home.id, name: home.name, createdAt: home.createdAt, rooms: placed)
     }
 
     func roomModel(for id: UUID) -> RoomModel? {
-        room(with: id)?.currentVersion?.snapshot?.room
+        guard let room = room(with: id), var rm = room.currentVersion?.snapshot?.room else { return nil }
+        rm.name = room.name
+        return rm
     }
 
-    private func room(with id: UUID) -> Room? {
-        let descriptor = FetchDescriptor<Room>(predicate: #Predicate { $0.id == id })
-        return try? modelContext.fetch(descriptor).first
-    }
-
-    // MARK: - Writes
-
-    /// Persist a freshly scanned room as a new Room + its initial Version.
-    /// `modelURL` is the temporary exported USDZ, copied into permanent storage.
-    /// Returns nil (and persists nothing) if the snapshot can't be encoded or the
-    /// write fails — the caller surfaces an error instead of storing a phantom room.
-    @discardableResult
-    func saveScannedRoom(_ roomModel: RoomModel, name: String, modelURL: URL? = nil) -> UUID? {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let roomName = trimmed.isEmpty ? roomModel.name : trimmed
-        let room = Room(name: roomName)
-
-        // Copy the scan's 3D model into permanent storage, keyed by room id.
-        var usdzPath: String?
-        if let modelURL, FileManager.default.fileExists(atPath: modelURL.path(percentEncoded: false)) {
-            let dest = Self.modelsDirectory.appending(path: "\(room.id.uuidString).usdz")
-            try? FileManager.default.removeItem(at: dest)
-            if (try? FileManager.default.copyItem(at: modelURL, to: dest)) != nil {
-                usdzPath = dest.lastPathComponent
-            }
-        }
-
-        // Encode FIRST: never persist a Version we can't round-trip.
-        let snapshot = VersionSnapshot(room: roomModel, usdzPath: usdzPath)
-        guard let payload = try? JSONEncoder().encode(snapshot), !payload.isEmpty else {
-            removeModelFile(usdzPath)
-            return nil
-        }
-
-        let home = defaultHome
-        room.home = home
-        home.rooms.append(room)
-
-        let version = Version(label: "Version 1", payload: payload)
-        version.room = room
-        room.versions.append(version)
-        room.currentVersion = version
-
-        modelContext.insert(room)
-        modelContext.insert(version)
-        do {
-            try modelContext.save()
-        } catch {
-            modelContext.rollback()
-            removeModelFile(usdzPath)
-            return nil
-        }
-        refresh()
-        return room.id
-    }
-
-    func deleteRoom(id: UUID) {
-        guard let room = room(with: id) else { return }
-        removeModelFile(room.currentVersion?.snapshot?.usdzPath)
-        modelContext.delete(room)
-        try? modelContext.save()
-        refresh()
-    }
-
-    /// Absolute URL of a saved room's USDZ model, if one exists on disk.
     func modelURL(for id: UUID) -> URL? {
         guard let path = room(with: id)?.currentVersion?.snapshot?.usdzPath else { return nil }
         let url = Self.modelsDirectory.appending(path: path)
         return FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) ? url : nil
+    }
+
+    private func home(with id: UUID) -> Home? {
+        let d = FetchDescriptor<Home>(predicate: #Predicate { $0.id == id })
+        return try? modelContext.fetch(d).first
+    }
+
+    private func room(with id: UUID) -> Room? {
+        let d = FetchDescriptor<Room>(predicate: #Predicate { $0.id == id })
+        return try? modelContext.fetch(d).first
+    }
+
+    // MARK: - Writes
+
+    /// Persist a whole-home scan: ONE Home + N Rooms, each with an initial Version.
+    /// All-or-nothing — returns nil and persists nothing on any failure.
+    @discardableResult
+    func saveScannedHome(_ rooms: [RoomModel], homeName: String,
+                         modelURLs: [UUID: URL] = [:]) -> UUID? {
+        guard !rooms.isEmpty else { return nil }
+        let trimmed = homeName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let home = Home(name: trimmed.isEmpty ? "Evim" : trimmed)
+        var copied: [String] = []
+
+        for (i, rm) in rooms.enumerated() {
+            let room = Room(name: rm.name.isEmpty ? "Oda \(i + 1)" : rm.name, sortIndex: i)
+            room.home = home
+            home.rooms.append(room)
+
+            var usdz: String?
+            if let url = modelURLs[rm.id],
+               FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
+                let dest = Self.modelsDirectory.appending(path: "\(room.id.uuidString).usdz")
+                try? FileManager.default.removeItem(at: dest)
+                if (try? FileManager.default.copyItem(at: url, to: dest)) != nil {
+                    usdz = dest.lastPathComponent
+                    copied.append(usdz!)
+                }
+            }
+
+            let snapshot = VersionSnapshot(room: rm, usdzPath: usdz)
+            guard let payload = try? JSONEncoder().encode(snapshot), !payload.isEmpty else {
+                copied.forEach { removeModelFile($0) }
+                return nil
+            }
+            let version = Version(label: "Version 1", payload: payload)
+            version.room = room
+            room.versions.append(version)
+            room.currentVersion = version
+            modelContext.insert(room)
+            modelContext.insert(version)
+        }
+
+        modelContext.insert(home)
+        do {
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            copied.forEach { removeModelFile($0) }
+            return nil
+        }
+        refresh()
+        return home.id
+    }
+
+    func renameRoom(id: UUID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let room = room(with: id) else { return }
+        room.name = trimmed
+        try? modelContext.save()
+        refresh()
+    }
+
+    func deleteHome(id: UUID) {
+        guard let home = home(with: id) else { return }
+        for room in home.rooms {
+            removeModelFile(room.currentVersion?.snapshot?.usdzPath)
+        }
+        modelContext.delete(home)
+        try? modelContext.save()
+        refresh()
     }
 
     // MARK: - Model file storage
@@ -136,28 +165,18 @@ final class RoomStore {
         try? FileManager.default.removeItem(at: Self.modelsDirectory.appending(path: relativePath))
     }
 
-    // MARK: - Default home
-
-    private var defaultHome: Home {
-        if let existing = try? modelContext.fetch(FetchDescriptor<Home>()).first {
-            return existing
-        }
-        let home = Home(name: "My Home")
-        modelContext.insert(home)
-        try? modelContext.save()
-        return home
-    }
-
     // MARK: - Preview / tests
 
-    /// In-memory store seeded with a mock room — drives previews and CI with no device.
     static var preview: RoomStore {
         let schema = Schema(versionedSchema: SchemaV1.self)
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        // Previews are non-throwing contexts; a failure here is a programmer error.
         let container = try! ModelContainer(for: schema, configurations: [config])
         let store = RoomStore(modelContext: container.mainContext)
-        store.saveScannedRoom(.mock, name: "Living Room")
+        let rooms = [
+            RoomModel.mockLShaped,
+            HomeGeometry.transform(.mock, by: Pose2D(translation: Point2D(x: 5.2, z: 0)))
+        ]
+        store.saveScannedHome(rooms, homeName: "Daire 1")
         return store
     }
 }
