@@ -47,7 +47,11 @@ public enum RoomNaming {
             if idxs.count == 1 {
                 names[idxs[0]] = base
             } else {
-                let ordered = idxs.sorted { resolved[$0].area > resolved[$1].area }
+                let ordered = idxs.sorted {
+                    let a = resolved[$0].area, b = resolved[$1].area
+                    if a != b { return a > b }
+                    return resolved[$0].room.id.uuidString > resolved[$1].room.id.uuidString
+                }
                 for (n, idx) in ordered.enumerated() {
                     names[idx] = "\(base) \(n + 1)"
                 }

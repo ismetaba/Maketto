@@ -21,31 +21,95 @@ enum RoomModelConverter {
         name: String,
         createdAt: Date = .now
     ) -> RoomModel {
-        let walls = captured.walls.map(makeWall(from:))
-
-        let openings =
-            captured.doors.compactMap { makeOpening(from: $0, type: .door, walls: walls) }
-            + captured.windows.compactMap { makeOpening(from: $0, type: .window, walls: walls) }
-            + captured.openings.compactMap { makeOpening(from: $0, type: .opening, walls: walls) }
-
-        let objects = captured.objects.map(makeObject(from:))
-        let outline = FloorGeometry.outline(fromWalls: walls)
-
-        return RoomModel(
-            name: name,
-            createdAt: createdAt,
-            walls: walls,
-            openings: openings,
-            detectedObjects: objects,
-            floorOutline: outline,
-            source: .roomplan,
-            kind: roomKind(of: captured)
+        makeRoomModel(
+            walls: captured.walls, doors: captured.doors, windows: captured.windows,
+            openings: captured.openings, objects: captured.objects,
+            name: name, kind: roomKind(of: captured), createdAt: createdAt
         )
     }
 
-    /// Map RoomPlan's room section label to our RoomKind (first section wins).
+    /// Build a RoomModel from explicit surface/object subsets (used to split a
+    /// whole-home capture into per-room models).
+    static func makeRoomModel(
+        walls capturedWalls: [CapturedRoom.Surface],
+        doors: [CapturedRoom.Surface],
+        windows: [CapturedRoom.Surface],
+        openings: [CapturedRoom.Surface],
+        objects capturedObjects: [CapturedRoom.Object],
+        name: String, kind: RoomKind, createdAt: Date = .now
+    ) -> RoomModel {
+        let walls = capturedWalls.map(makeWall(from:))
+        let openingModels =
+            doors.compactMap { makeOpening(from: $0, type: .door, walls: walls) }
+            + windows.compactMap { makeOpening(from: $0, type: .window, walls: walls) }
+            + openings.compactMap { makeOpening(from: $0, type: .opening, walls: walls) }
+        let objects = capturedObjects.map(makeObject(from:))
+        let outline = FloorGeometry.outline(fromWalls: walls)
+        return RoomModel(
+            name: name, createdAt: createdAt, walls: walls, openings: openingModels,
+            detectedObjects: objects, floorOutline: outline, source: .roomplan, kind: kind
+        )
+    }
+
+    /// Split ONE whole-home capture into per-room models using its sections:
+    /// each wall/opening/object is assigned to the nearest section centre.
+    /// Falls back to a single room when there is 0–1 section.
+    static func splitRooms(from captured: CapturedRoom, createdAt: Date = .now) -> [RoomModel] {
+        let sections = captured.sections
+        guard sections.count > 1 else {
+            return [makeRoomModel(from: captured, name: "", createdAt: createdAt)]
+        }
+        let n = sections.count
+
+        /// Squared distances from a point to every section centre, sorted nearest-first.
+        func ranked(_ p: SIMD3<Float>) -> [(index: Int, d2: Float)] {
+            sections.enumerated().map { i, s in
+                let dx = s.center.x - p.x, dz = s.center.z - p.z
+                return (i, dx * dx + dz * dz)
+            }
+            .sorted { $0.d2 < $1.d2 }
+        }
+        /// Assign to the nearest section AND a near-tie second one, so a shared
+        /// wall/opening between two rooms belongs to BOTH and each loop can close.
+        func assign(_ p: SIMD3<Float>, into buckets: inout [[Int]], item: Int) {
+            let r = ranked(p)
+            buckets[r[0].index].append(item)
+            if r.count > 1, r[1].d2 < r[0].d2 * 2.56 {   // within ~1.6x of nearest
+                buckets[r[1].index].append(item)
+            }
+        }
+        func nearest(_ p: SIMD3<Float>) -> Int { ranked(p)[0].index }
+
+        var wallIdx = Array(repeating: [Int](), count: n)
+        var doorIdx = wallIdx, windowIdx = wallIdx, openIdx = wallIdx
+        var objIdx = Array(repeating: [Int](), count: n)
+        for (k, w) in captured.walls.enumerated() { assign(w.transform.columns.3.xyz, into: &wallIdx, item: k) }
+        for (k, d) in captured.doors.enumerated() { assign(d.transform.columns.3.xyz, into: &doorIdx, item: k) }
+        for (k, w) in captured.windows.enumerated() { assign(w.transform.columns.3.xyz, into: &windowIdx, item: k) }
+        for (k, o) in captured.openings.enumerated() { assign(o.transform.columns.3.xyz, into: &openIdx, item: k) }
+        for (k, o) in captured.objects.enumerated() { objIdx[nearest(o.transform.columns.3.xyz)].append(k) }
+
+        let rooms = sections.enumerated().map { i, s in
+            makeRoomModel(
+                walls: wallIdx[i].map { captured.walls[$0] },
+                doors: doorIdx[i].map { captured.doors[$0] },
+                windows: windowIdx[i].map { captured.windows[$0] },
+                openings: openIdx[i].map { captured.openings[$0] },
+                objects: objIdx[i].map { captured.objects[$0] },
+                name: "", kind: sectionKind(s.label), createdAt: createdAt
+            )
+        }
+        // Drop sections that won no walls; fall back to one room if all collapse.
+        let nonEmpty = rooms.filter { !$0.walls.isEmpty }
+        return nonEmpty.isEmpty ? [makeRoomModel(from: captured, name: "", createdAt: createdAt)] : nonEmpty
+    }
+
     static func roomKind(of captured: CapturedRoom) -> RoomKind {
-        switch captured.sections.first?.label {
+        sectionKind(captured.sections.first?.label ?? .unidentified)
+    }
+
+    static func sectionKind(_ label: CapturedRoom.Section.Label) -> RoomKind {
+        switch label {
         case .livingRoom: return .livingRoom
         case .bedroom: return .bedroom
         case .bathroom: return .bathroom

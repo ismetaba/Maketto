@@ -41,7 +41,7 @@ final class RoomStore {
                 }
             let area = models.reduce(0.0) { $0 + PlanGeometry.area(of: $1) }
             return HomeSummary(id: home.id, name: home.name, createdAt: home.createdAt,
-                               roomCount: home.rooms.count, totalArea: area, rooms: models)
+                               roomCount: models.count, totalArea: area, rooms: models)
         }
     }
 
@@ -111,6 +111,7 @@ final class RoomStore {
 
             let snapshot = VersionSnapshot(room: rm, usdzPath: usdz)
             guard let payload = try? JSONEncoder().encode(snapshot), !payload.isEmpty else {
+                modelContext.rollback()
                 copied.forEach { removeModelFile($0) }
                 return nil
             }
@@ -138,17 +139,16 @@ final class RoomStore {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let room = room(with: id) else { return }
         room.name = trimmed
-        try? modelContext.save()
+        do { try modelContext.save() } catch { modelContext.rollback(); return }
         refresh()
     }
 
     func deleteHome(id: UUID) {
         guard let home = home(with: id) else { return }
-        for room in home.rooms {
-            removeModelFile(room.currentVersion?.snapshot?.usdzPath)
-        }
+        let paths = home.rooms.compactMap { $0.currentVersion?.snapshot?.usdzPath }
         modelContext.delete(home)
-        try? modelContext.save()
+        do { try modelContext.save() } catch { modelContext.rollback(); return }
+        paths.forEach { removeModelFile($0) }   // remove files only after the delete commits
         refresh()
     }
 

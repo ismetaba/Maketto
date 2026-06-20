@@ -332,15 +332,28 @@ enum PlanGeometry {
         return fit(bounds: bbox, in: size, padding: padding, maxScale: maxScale)
     }
 
-    /// Floor area (m²) via shoelace over the room's floor polygon.
+    /// Floor area (m²) via shoelace over the room's floor polygon, falling back to
+    /// the wall bounding-box area when the walls don't form a closed loop.
     static func area(of room: RoomModel) -> Double {
-        guard let poly = floorPolygon(room), poly.count >= 3 else { return 0 }
-        var s = 0.0
-        for i in 0..<poly.count {
-            let a = poly[i], b = poly[(i + 1) % poly.count]
-            s += a.x * b.z - b.x * a.z
+        if let poly = floorPolygon(room), poly.count >= 3 {
+            var s = 0.0
+            for i in 0..<poly.count {
+                let a = poly[i], b = poly[(i + 1) % poly.count]
+                s += a.x * b.z - b.x * a.z
+            }
+            return abs(s) * 0.5
         }
-        return abs(s) * 0.5
+        if let b = worldBounds(room) { return Double(b.width) * Double(b.height) }
+        return 0
+    }
+
+    /// A representative interior point: floor-polygon centroid, else wall-bbox centre.
+    /// Used for labels and tap-fallback so every detected room stays usable even
+    /// when its walls don't close into a polygon.
+    static func roomCenter(_ room: RoomModel) -> Point2D? {
+        if let poly = floorPolygon(room), let c = polygonCentroid(poly) { return c }
+        if let b = worldBounds(room) { return Point2D(x: Double(b.midX), z: Double(b.midY)) }
+        return nil
     }
 
     /// Even-odd point-in-polygon test (floor plane) — for tap-a-room hit testing.

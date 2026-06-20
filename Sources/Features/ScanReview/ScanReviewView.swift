@@ -4,15 +4,16 @@ import SwiftUI
 /// Tap a room to rename it; name the home; save.
 struct ScanReviewView: View {
     let modelURLs: [UUID: URL]
-    let onSave: ([RoomModel], String) -> Void
+    let onSave: ([RoomModel], String) -> Bool
     let onRescan: () -> Void
 
     @State private var rooms: [RoomModel]
     @State private var homeName = "Evim"
     @State private var selectedRoomID: UUID?
+    @State private var saveFailed = false
 
     init(rooms: [RoomModel], modelURLs: [UUID: URL],
-         onSave: @escaping ([RoomModel], String) -> Void, onRescan: @escaping () -> Void) {
+         onSave: @escaping ([RoomModel], String) -> Bool, onRescan: @escaping () -> Void) {
         _rooms = State(initialValue: rooms)
         self.modelURLs = modelURLs
         self.onSave = onSave
@@ -36,6 +37,11 @@ struct ScanReviewView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
+        .alert("Kaydedilemedi", isPresented: $saveFailed) {
+            Button("Tamam", role: .cancel) {}
+        } message: {
+            Text("Bir sorun oluştu. Lütfen tekrar deneyin.")
+        }
     }
 
     private var summaryPill: some View {
@@ -60,7 +66,7 @@ struct ScanReviewView: View {
 
             field(icon: "house", placeholder: "Ev adı", text: $homeName)
 
-            Button { onSave(rooms, homeName) } label: {
+            Button { if !onSave(rooms, homeName) { saveFailed = true } } label: {
                 HStack(spacing: 9) {
                     Text("Kaydet")
                     Image(systemName: "checkmark").font(.system(size: 15, weight: .bold))
@@ -115,6 +121,6 @@ struct ScanReviewView: View {
             { var r = RoomModel.mockLShaped; r.kind = .livingRoom; return r }(),
             { var r = HomeGeometry.transform(.mock, by: Pose2D(translation: Point2D(x: 5.2, z: 0))); r.kind = .bedroom; return r }()
         ]),
-        modelURLs: [:], onSave: { _, _ in }, onRescan: {}
+        modelURLs: [:], onSave: { _, _ in true }, onRescan: {}
     )
 }

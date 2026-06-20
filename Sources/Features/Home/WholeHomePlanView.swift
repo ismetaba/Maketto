@@ -96,12 +96,25 @@ struct WholeHomePlanView: View {
         guard let base = PlanGeometry.fit(rooms, in: size, padding: 28, maxScale: 120) else { return }
         let t = transform(base: base, size: size)
         let world = t.unapply(point)
+
+        // Among rooms whose polygon contains the tap, pick the smallest (innermost).
+        var hit: (id: UUID, area: Double)?
         for room in rooms {
             if let poly = PlanGeometry.floorPolygon(room), PlanGeometry.contains(poly, world) {
-                onSelect?(room.id)
-                return
+                let a = PlanGeometry.area(of: room)
+                if hit == nil || a < hit!.area { hit = (room.id, a) }
             }
         }
+        if let hit { onSelect?(hit.id); return }
+
+        // Fallback so every room stays tappable: nearest room centre to the tap.
+        var nearest: (id: UUID, dist: Double)?
+        for room in rooms {
+            guard let c = PlanGeometry.roomCenter(room) else { continue }
+            let d = c.distance(to: world)
+            if nearest == nil || d < nearest!.dist { nearest = (room.id, d) }
+        }
+        if let nearest { onSelect?(nearest.id) }
     }
 
     private func draw(_ context: GraphicsContext, size: CGSize) {
@@ -131,11 +144,9 @@ struct WholeHomePlanView: View {
     }
 
     private func drawLabel(_ context: GraphicsContext, room: RoomModel, t: PlanGeometry.Transform) {
-        guard let poly = PlanGeometry.floorPolygon(room),
-              let centroid = PlanGeometry.polygonCentroid(poly) else { return }
-        // Degrade gracefully for tiny rooms.
-        guard let bounds = PlanGeometry.worldBounds(room) else { return }
-        let extent = min(bounds.width, bounds.height) * Double(t.scale)
+        // Every detected room gets a label, even if its walls don't close.
+        guard let centroid = PlanGeometry.roomCenter(room) else { return }
+        let extent = (PlanGeometry.worldBounds(room).map { min($0.width, $0.height) } ?? 0) * t.scale
         let center = t.apply(centroid)
 
         let nameText = context.resolve(

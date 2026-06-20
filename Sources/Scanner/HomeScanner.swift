@@ -6,16 +6,15 @@ import RoomPlan
 import ARKit
 #endif
 
-/// Drives a whole-home scan: ONE persistent ARSession, walk room-to-room ending
-/// each with stop(pauseARSession:false) to keep the world frame, accumulate
-/// CapturedRoomData, then merge offline (RoomBuilder + StructureBuilder) into
-/// per-room RoomModels with default names.
+/// Drives a whole-home scan as ONE continuous capture: the user walks through the
+/// whole home, taps "Bitir" once, and the software splits the result into rooms by
+/// RoomPlan's detected sections. The user fixes names (or anything wrong) in review.
 @MainActor
 @Observable
 final class HomeScanner {
     enum State: Equatable {
         case idle
-        case scanning(roomCount: Int)   // rooms already captured
+        case scanning
         case processing
         case review([RoomModel])
         case failed(String)
@@ -24,14 +23,14 @@ final class HomeScanner {
 
     let isSupported: Bool
     private(set) var state: State
-    /// roomModel.id -> exported temporary USDZ.
+    /// roomModel.id -> exported USDZ (empty for the split flow until per-room export lands).
     private(set) var modelURLs: [UUID: URL] = [:]
 
     #if canImport(RoomPlan)
-    @ObservationIgnored let arSession = ARSession()
+    @ObservationIgnored private(set) var arSession = ARSession()
     @ObservationIgnored private weak var captureSession: RoomCaptureSession?
-    @ObservationIgnored private var capturedData: [CapturedRoomData] = []
     @ObservationIgnored private lazy var delegate = SessionDelegate(owner: self)
+    @ObservationIgnored private var didConsumeCapture = false
     #endif
 
     init() {
@@ -48,86 +47,55 @@ final class HomeScanner {
     func bind(session: RoomCaptureSession) {
         captureSession = session
         session.delegate = delegate
-        runRoom()
+        session.run(configuration: RoomCaptureSession.Configuration())
+        // Defer the observable mutation out of the SwiftUI view-update pass.
+        Task { @MainActor in if case .idle = self.state { self.state = .scanning } }
     }
 
-    private func runRoom() {
-        captureSession?.run(configuration: RoomCaptureSession.Configuration())
-        state = .scanning(roomCount: capturedData.count)
-    }
-
-    /// "Sonraki Oda" — finish this room (keep AR tracking) and continue.
-    func nextRoom() {
-        captureSession?.stop(pauseARSession: false)
-        // delegate.didEnd appends, then we re-run for the next room.
-    }
-
-    /// "Bitir" — finish the last room and merge everything.
+    /// "Bitir" — stop the single capture and split it into rooms.
     func finish() {
+        guard case .scanning = state else { return }
         state = .processing
-        captureSession?.stop(pauseARSession: false)
+        captureSession?.stop()
     }
 
     func reset() {
-        capturedData.removeAll()
+        captureSession?.stop()
+        captureSession?.delegate = nil
+        captureSession = nil
+        arSession = ARSession()         // fresh AR world frame for the next scan
+        didConsumeCapture = false
         modelURLs.removeAll()
         state = isSupported ? .idle : .unsupported
     }
 
-    // Called by the delegate (main actor).
+    // Delivered on the main actor by the delegate hop.
     fileprivate func didEnd(_ data: CapturedRoomData) {
-        capturedData.append(data)
-        if case .processing = state {
-            process()
-        } else {
-            runRoom()   // continue with the next room
-        }
-    }
-
-    fileprivate func didFail(_ error: Error) {
-        state = .failed(error.localizedDescription)
-    }
-
-    private func process() {
-        let datas = capturedData
+        guard case .processing = state, !didConsumeCapture else { return }
+        didConsumeCapture = true
         Task { @MainActor in
             do {
-                let roomBuilder = RoomBuilder(options: [.beautifyObjects])
-                var rooms: [CapturedRoom] = []
-                for data in datas {
-                    rooms.append(try await roomBuilder.capturedRoom(from: data))
-                }
-                let structure = try await StructureBuilder(options: [.beautifyObjects])
-                    .capturedStructure(from: rooms)
-
-                var models: [RoomModel] = []
-                var urls: [UUID: URL] = [:]
-                for captured in structure.rooms {
-                    let model = RoomModelConverter.makeRoomModel(from: captured, name: "")
-                    if let url = try? exportUSDZ(captured) { urls[model.id] = url }
-                    models.append(model)
-                }
-                modelURLs = urls
-                state = .review(RoomNaming.assignNames(models))
+                let captured = try await RoomBuilder(options: [.beautifyObjects])
+                    .capturedRoom(from: data)
+                let rooms = RoomModelConverter.splitRooms(from: captured)
+                state = .review(RoomNaming.assignNames(rooms))
             } catch {
-                state = .failed("Odalar birleştirilemedi — odaları kapılardan geçerek ardışık tarayın.")
+                state = .failed("Tarama işlenemedi. Lütfen evi yavaşça, tüm odaları kapsayarak tekrar tarayın.")
             }
         }
     }
 
-    private func exportUSDZ(_ room: CapturedRoom) throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).usdz")
-        try room.export(to: url, exportOptions: .parametric)
-        return url
+    fileprivate func didFail(_ message: String) {
+        guard !didConsumeCapture else { return }
+        didConsumeCapture = true
+        state = .failed(message)
     }
     #endif
 }
 
 #if canImport(RoomPlan)
-/// RoomCaptureSessionDelegate is delivered on the main thread; the conformance is
-/// @preconcurrency to bridge the SDK's pre-concurrency protocol.
-@MainActor
-final class SessionDelegate: NSObject, @preconcurrency RoomCaptureSessionDelegate {
+/// Non-isolated so the SDK can call it on any thread; we hop to the main actor.
+final class SessionDelegate: NSObject, RoomCaptureSessionDelegate {
     weak var owner: HomeScanner?
 
     init(owner: HomeScanner) {
@@ -137,10 +105,13 @@ final class SessionDelegate: NSObject, @preconcurrency RoomCaptureSessionDelegat
 
     func captureSession(_ session: RoomCaptureSession,
                         didEndWith data: CapturedRoomData, error: (any Error)?) {
-        if let error {
-            owner?.didFail(error)
-        } else {
-            owner?.didEnd(data)
+        let message = error?.localizedDescription
+        Task { @MainActor [weak owner] in
+            if let message {
+                owner?.didFail(message)
+            } else {
+                owner?.didEnd(data)
+            }
         }
     }
 }

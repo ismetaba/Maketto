@@ -29,10 +29,13 @@ struct HomeScanScreen: View {
                     rooms: rooms,
                     modelURLs: scanner.modelURLs,
                     onSave: { edited, homeName in
-                        if let id = store.saveScannedHome(edited, homeName: homeName, modelURLs: scanner.modelURLs) {
-                            router.popToRoot()
-                            router.push(.homeDetail(id))
+                        guard let id = store.saveScannedHome(edited, homeName: homeName,
+                                                             modelURLs: scanner.modelURLs) else {
+                            return false
                         }
+                        router.popToRoot()
+                        router.push(.homeDetail(id))
+                        return true
                     },
                     onRescan: { scanner.reset() }
                 )
@@ -45,11 +48,6 @@ struct HomeScanScreen: View {
         }
     }
 
-    private var roomCount: Int {
-        if case .scanning(let n) = scanner.state { return n }
-        return 0
-    }
-
     @ViewBuilder
     private var scanningView: some View {
         #if canImport(RoomPlan)
@@ -59,38 +57,31 @@ struct HomeScanScreen: View {
             HStack {
                 darkCircle("chevron.left") { router.pop() }
                 Spacer()
-                Text("Oda \(roomCount + 1)")
-                    .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(Color.black.opacity(0.5), in: Capsule())
-                Spacer()
-                Color.clear.frame(width: 40, height: 40)
             }
             .padding(.horizontal, 16)
             .padding(.top, 6)
 
             VStack {
+                hintPill.padding(.top, 64)
                 Spacer()
-                HStack(spacing: 12) {
-                    Button { scanner.nextRoom() } label: {
-                        Text("Sonraki Oda")
-                            .font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
-                            .padding(.vertical, 15).padding(.horizontal, 22)
-                            .background(Color.black.opacity(0.5), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-
-                    Button { scanner.finish() } label: {
-                        Text("Bitir")
-                    }
+                Button { scanner.finish() } label: { Text("Bitir") }
                     .buttonStyle(ClayButtonStyle())
-                }
-                .padding(.bottom, 44)
+                    .padding(.bottom, 44)
             }
         }
         #else
         ContentUnavailableView("RoomPlan yok", systemImage: "xmark.octagon")
         #endif
+    }
+
+    private var hintPill: some View {
+        HStack(spacing: 9) {
+            Circle().fill(Color(hex: 0xA7E8C6)).frame(width: 8, height: 8)
+            Text("Tüm evi dolaşın — Maketto odalara böler")
+                .font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 9)
+        .background(Color.black.opacity(0.5), in: Capsule())
     }
 
     private var processingView: some View {
