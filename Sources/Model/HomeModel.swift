@@ -18,6 +18,15 @@ public struct Pose2D: Codable, Hashable, Sendable {
         return Point2D(x: c * p.x - s * p.z + translation.x,
                        z: s * p.x + c * p.z + translation.z)
     }
+
+    /// The inverse rigid transform: `inverse.apply(apply(p)) == p`.
+    public var inverse: Pose2D {
+        let c = cos(rotation), s = sin(rotation)
+        // R(-a)·t
+        let rx = c * translation.x + s * translation.z
+        let rz = -s * translation.x + c * translation.z
+        return Pose2D(rotation: -rotation, translation: Point2D(x: -rx, z: -rz))
+    }
 }
 
 /// Pure helpers to re-express a whole room in another frame. Lengths/widths are

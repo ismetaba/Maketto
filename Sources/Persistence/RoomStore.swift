@@ -75,6 +75,12 @@ final class RoomStore {
         return rm
     }
 
+    /// Number of saved versions for a room (the current version is always the
+    /// latest, so this doubles as the current version number).
+    func versionCount(for id: UUID) -> Int {
+        max(room(with: id)?.versions.count ?? 1, 1)
+    }
+
     func modelURL(for id: UUID) -> URL? {
         guard let path = room(with: id)?.currentVersion?.snapshot?.usdzPath else { return nil }
         let url = Self.modelsDirectory.appending(path: path)
@@ -143,6 +149,48 @@ final class RoomStore {
         }
         refresh()
         return home.id
+    }
+
+    /// Persist a hand-edited room as a NEW Version and make it current.
+    /// `editedDisplayRoom` comes from the editor in the STRAIGHTENED display frame
+    /// (matching `roomModel(for:)`); it is converted back to the raw home frame so
+    /// the stored snapshot stays consistent with every other room. Rolls back fully
+    /// on failure. Returns false if nothing was saved.
+    @discardableResult
+    func saveEditedRoom(id: UUID, editedDisplayRoom: RoomModel, label: String? = nil) -> Bool {
+        guard let room = room(with: id) else { return false }
+
+        let raw: RoomModel
+        if let home = room.home {
+            let homeRooms = home.rooms.compactMap { $0.currentVersion?.snapshot?.room }
+            let pose = HomeGeometry.straighteningPose(of: homeRooms)
+            raw = HomeGeometry.transform(editedDisplayRoom, by: pose.inverse)
+        } else {
+            raw = editedDisplayRoom
+        }
+
+        let snapshot = VersionSnapshot(room: raw, usdzPath: room.currentVersion?.snapshot?.usdzPath)
+        guard let payload = try? JSONEncoder().encode(snapshot), !payload.isEmpty else { return false }
+
+        let trimmed = (label ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = trimmed.isEmpty ? "Version \(room.versions.count + 1)" : trimmed
+        let version = Version(label: name, payload: payload)
+        version.room = room
+        let previousCurrent = room.currentVersion
+        room.versions.append(version)
+        room.currentVersion = version
+        modelContext.insert(version)
+
+        do {
+            try modelContext.save()
+        } catch {
+            room.versions.removeAll { $0.id == version.id }
+            room.currentVersion = previousCurrent
+            modelContext.rollback()
+            return false
+        }
+        refresh()
+        return true
     }
 
     func renameRoom(id: UUID, to name: String) {
