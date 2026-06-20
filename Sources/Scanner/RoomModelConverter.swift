@@ -22,7 +22,8 @@ enum RoomModelConverter {
         createdAt: Date = .now
     ) -> RoomModel {
         makeRoomModel(
-            walls: captured.walls, doors: captured.doors, windows: captured.windows,
+            walls: captured.walls.filter { $0.confidence != .low },
+            doors: captured.doors, windows: captured.windows,
             openings: captured.openings, objects: captured.objects,
             name: name, kind: roomKind(of: captured), createdAt: createdAt
         )
@@ -60,6 +61,8 @@ enum RoomModelConverter {
             return [makeRoomModel(from: captured, name: "", createdAt: createdAt)]
         }
         let n = sections.count
+        // Drop RoomPlan's low-confidence wall detections (stray/diagonal slivers).
+        let walls = captured.walls.filter { $0.confidence != .low }
 
         /// Squared distances from a point to every section centre, sorted nearest-first.
         func ranked(_ p: SIMD3<Float>) -> [(index: Int, d2: Float)] {
@@ -83,7 +86,7 @@ enum RoomModelConverter {
         var wallIdx = Array(repeating: [Int](), count: n)
         var doorIdx = wallIdx, windowIdx = wallIdx, openIdx = wallIdx
         var objIdx = Array(repeating: [Int](), count: n)
-        for (k, w) in captured.walls.enumerated() { assign(w.transform.columns.3.xyz, into: &wallIdx, item: k) }
+        for (k, w) in walls.enumerated() { assign(w.transform.columns.3.xyz, into: &wallIdx, item: k) }
         for (k, d) in captured.doors.enumerated() { assign(d.transform.columns.3.xyz, into: &doorIdx, item: k) }
         for (k, w) in captured.windows.enumerated() { assign(w.transform.columns.3.xyz, into: &windowIdx, item: k) }
         for (k, o) in captured.openings.enumerated() { assign(o.transform.columns.3.xyz, into: &openIdx, item: k) }
@@ -91,7 +94,7 @@ enum RoomModelConverter {
 
         let rooms = sections.enumerated().map { i, s in
             makeRoomModel(
-                walls: wallIdx[i].map { captured.walls[$0] },
+                walls: wallIdx[i].map { walls[$0] },
                 doors: doorIdx[i].map { captured.doors[$0] },
                 windows: windowIdx[i].map { captured.windows[$0] },
                 openings: openIdx[i].map { captured.openings[$0] },

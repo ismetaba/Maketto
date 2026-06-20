@@ -134,7 +134,7 @@ struct WholeHomePlanView: View {
         // wall never doubles up into a crossing sliver.
         let ink = PlanInk(paper: cPaper, floor: .clear, wall: cWall, door: cDoor, window: cWindow)
         FloorPlanRenderer.drawStructure(
-            walls: PlanGeometry.deduped(rooms.flatMap(\.walls)),
+            walls: PlanGeometry.dropOffAxisOutliers(PlanGeometry.deduped(rooms.flatMap(\.walls))),
             openings: PlanGeometry.deduped(rooms.flatMap(\.openings)),
             centroid: HomeGeometry.bboxCenter(of: rooms),
             objects: [], into: context, t: t, ink: ink, showFurniture: false

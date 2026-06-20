@@ -214,6 +214,28 @@ enum PlanGeometry {
         return out
     }
 
+    /// Angular distance of a wall from the nearest axis (0/90°), radians in [0, π/4].
+    static func offAxis(_ wall: Wall) -> Double {
+        let a = atan2(wall.direction.z, wall.direction.x)
+        let m = abs(a.truncatingRemainder(dividingBy: .pi / 2))
+        return min(m, .pi / 2 - m)
+    }
+
+    /// In a DOMINANTLY rectilinear home (≥80% of wall length near-axis), drop the
+    /// stray off-axis walls (diagonal slivers from RoomPlan). Genuinely angled
+    /// homes (lots of off-axis length) are left untouched.
+    static func dropOffAxisOutliers(_ walls: [Wall], tolerance: Double = 18 * .pi / 180) -> [Wall] {
+        guard walls.count > 4 else { return walls }
+        var nearLen = 0.0, totalLen = 0.0
+        for wall in walls {
+            let l = wall.length
+            totalLen += l
+            if offAxis(wall) <= tolerance { nearLen += l }
+        }
+        guard totalLen > 0, nearLen / totalLen > 0.8 else { return walls }
+        return walls.filter { offAxis($0) <= tolerance }
+    }
+
     // MARK: - 2) Object footprint corners
 
     /// The 4 world-space corners of a detected object's footprint rectangle,
