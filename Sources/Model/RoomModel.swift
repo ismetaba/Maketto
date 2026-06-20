@@ -44,6 +44,19 @@ public enum RoomSource: String, Codable, Sendable {
     case manual
 }
 
+/// Room category. Mirrors RoomPlan's `CapturedRoom.Section.Label` plus a couple
+/// of manual kinds; drives default names and the whole-home plan's floor fills.
+public enum RoomKind: String, Codable, Sendable, CaseIterable {
+    case livingRoom
+    case bedroom
+    case bathroom
+    case kitchen
+    case diningRoom
+    case hallway
+    case balcony
+    case unidentified
+}
+
 // MARK: - Wall
 
 public struct Wall: Codable, Hashable, Identifiable, Sendable {
@@ -179,6 +192,8 @@ public struct RoomModel: Codable, Hashable, Identifiable, Sendable {
     /// Ordered floor polygon (meters). Approximate for F1.
     public var floorOutline: [Point2D]?
     public var source: RoomSource
+    /// Room category (from RoomPlan or manual). Optional for backward-compat.
+    public var kind: RoomKind?
 
     public init(
         id: UUID = UUID(),
@@ -189,7 +204,8 @@ public struct RoomModel: Codable, Hashable, Identifiable, Sendable {
         openings: [Opening] = [],
         detectedObjects: [DetectedObject] = [],
         floorOutline: [Point2D]? = nil,
-        source: RoomSource
+        source: RoomSource,
+        kind: RoomKind? = nil
     ) {
         self.id = id
         self.name = name
@@ -200,6 +216,7 @@ public struct RoomModel: Codable, Hashable, Identifiable, Sendable {
         self.detectedObjects = detectedObjects
         self.floorOutline = floorOutline
         self.source = source
+        self.kind = kind
     }
 
     public func wall(_ id: UUID) -> Wall? { walls.first { $0.id == id } }

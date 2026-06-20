@@ -9,6 +9,8 @@ struct RoomSummary: Identifiable, Hashable, Sendable {
     let createdAt: Date
     let wallCount: Int
     let thumbnail: Data?
+    /// Decoded plan for rendering a library thumbnail.
+    let plan: RoomModel?
 }
 
 /// Hides SwiftData behind a small observable API. `rooms` is a stored,
@@ -40,7 +42,8 @@ final class RoomStore {
                 name: room.name,
                 createdAt: room.createdAt,
                 wallCount: model?.walls.count ?? 0,
-                thumbnail: room.currentVersion?.thumbnail
+                thumbnail: room.currentVersion?.thumbnail,
+                plan: model
             )
         }
     }

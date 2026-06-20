@@ -311,4 +311,51 @@ enum PlanGeometry {
         guard let poly, poly.count >= 3 else { return nil }
         return poly
     }
+
+    // MARK: - Multi-room (whole home)
+
+    /// Union bounding box over several rooms (all in one shared world frame).
+    static func worldBounds(_ rooms: [RoomModel], includeObjects: Bool = false) -> CGRect? {
+        var rect: CGRect?
+        for room in rooms {
+            guard let b = worldBounds(room, includeObjects: includeObjects) else { continue }
+            rect = rect.map { $0.union(b) } ?? b
+        }
+        return rect
+    }
+
+    /// Fit a whole home (many rooms) into a view. Lower default maxScale so a
+    /// one-room home doesn't render enormous.
+    static func fit(_ rooms: [RoomModel], in size: CGSize,
+                    padding: CGFloat = 28, maxScale: CGFloat = 120) -> Transform? {
+        guard let bbox = worldBounds(rooms) else { return nil }
+        return fit(bounds: bbox, in: size, padding: padding, maxScale: maxScale)
+    }
+
+    /// Floor area (m²) via shoelace over the room's floor polygon.
+    static func area(of room: RoomModel) -> Double {
+        guard let poly = floorPolygon(room), poly.count >= 3 else { return 0 }
+        var s = 0.0
+        for i in 0..<poly.count {
+            let a = poly[i], b = poly[(i + 1) % poly.count]
+            s += a.x * b.z - b.x * a.z
+        }
+        return abs(s) * 0.5
+    }
+
+    /// Even-odd point-in-polygon test (floor plane) — for tap-a-room hit testing.
+    static func contains(_ poly: [Point2D], _ p: Point2D) -> Bool {
+        guard poly.count >= 3 else { return false }
+        var inside = false
+        var j = poly.count - 1
+        for i in 0..<poly.count {
+            let a = poly[i], b = poly[j]
+            if (a.z > p.z) != (b.z > p.z) {
+                let x = a.x + (p.z - a.z) / (b.z - a.z) * (b.x - a.x)
+                if p.x < x { inside.toggle() }
+            }
+            j = i
+        }
+        return inside
+    }
 }

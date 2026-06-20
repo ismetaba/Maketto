@@ -51,6 +51,9 @@ targets:
           room so you can design and furnish it.
         UIRequiredDeviceCapabilities:
           - arm64
+        UIAppFonts:
+          - CormorantGaramond-VF.ttf
+          - CormorantGaramond-Italic-VF.ttf
 
     settings:
       base:

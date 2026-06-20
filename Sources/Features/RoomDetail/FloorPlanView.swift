@@ -1,18 +1,21 @@
 import SwiftUI
 import UIKit
 
-/// Beautiful read-only top-down floor plan (F2). Renders purely from a
-/// `RoomModel` via the pure `PlanGeometry`, so it previews with mock data and
-/// needs no device/RoomPlan. Pinch to zoom, drag to pan, double-tap to fit.
+/// Blueprint-style top-down floor plan of ONE room (Maketto visual language).
+/// Tap a wall → it highlights and its measurement appears as a pill ON the model.
+/// Pinch to zoom, drag to pan, the fit button re-centers. A dynamic metric grid
+/// sits behind. Per-room drawing is shared with the whole-home plan via
+/// `FloorPlanRenderer`.
 struct FloorPlanView: View {
     let room: RoomModel
-    /// Detected furniture is hidden for now (walls + openings only). Flip to
-    /// true — or wire a toggle — when the interior-design / furniture milestone
-    /// lands; the drawing + data path is kept intact behind this flag.
     var showFurniture: Bool = false
+    /// When false (e.g. a library thumbnail) the plan is a static fitted render
+    /// with no gestures or controls.
+    var interactive: Bool = true
 
     @State private var zoom: CGFloat = 1
     @State private var pan: CGSize = .zero
+    @State private var selectedWallID: UUID?
     @GestureState private var pinch: CGFloat = 1
     @GestureState private var dragLive: CGSize = .zero
     @Environment(\.colorScheme) private var colorScheme
@@ -21,30 +24,103 @@ struct FloorPlanView: View {
     private var effectivePan: CGSize {
         CGSize(width: pan.width + dragLive.width, height: pan.height + dragLive.height)
     }
+    private var dark: Bool { colorScheme == .dark }
+
+    // Blueprint treatment palette (light / dark)
+    private var cWall: Color { Color(light: Brand.evergreen, dark: Color(hex: 0xD9C088)) }
+    private var cFloor: Color { Color(light: Color(hex: 0xFBF7F0), dark: Color(white: 1, opacity: 0.028)) }
+    private var cDoor: Color { Color(light: Color(hex: 0x99793A), dark: Color(hex: 0xC8A862)) }
+    private var cWindow: Color { Color(light: Color(hex: 0x5E7E61), dark: Color(hex: 0xA8BFAB)) }
+    private var cSel: Color { Color(light: Brand.clay, dark: Color(hex: 0xE0B68F)) }
+    private var cPaper: Color { Brand.surface }
 
     var body: some View {
         if PlanGeometry.worldBounds(room, includeObjects: showFurniture) == nil {
-            ContentUnavailableView("No Floor Plan", systemImage: "square.dashed")
+            if interactive {
+                ContentUnavailableView("No Floor Plan", systemImage: "square.dashed")
+            } else {
+                Color.clear
+            }
+        } else if interactive {
+            GeometryReader { geo in
+                Canvas { context, size in
+                    draw(context, size: size)
+                }
+                .contentShape(Rectangle())
+                .gesture(navigationGesture)
+                .simultaneousGesture(
+                    SpatialTapGesture().onEnded { value in
+                        selectWall(at: value.location, in: geo.size)
+                    }
+                )
+                .overlay(alignment: .bottomTrailing) { fitButton }
+            }
         } else {
             Canvas { context, size in
                 draw(context, size: size)
             }
-            .contentShape(Rectangle())
-        .gesture(
-            MagnifyGesture()
-                .updating($pinch) { value, state, _ in state = value.magnification }
-                .onEnded { value in zoom = (zoom * value.magnification).clamped(0.4, 6) }
-                .simultaneously(with:
-                    DragGesture()
-                        .updating($dragLive) { value, state, _ in state = value.translation }
-                        .onEnded { value in
-                            pan.width += value.translation.width
-                            pan.height += value.translation.height
-                        }
-                )
+            .allowsHitTesting(false)
+        }
+    }
+
+    private var navigationGesture: some Gesture {
+        MagnifyGesture()
+            .updating($pinch) { value, state, _ in state = value.magnification }
+            .onEnded { value in zoom = (zoom * value.magnification).clamped(0.4, 8) }
+            .simultaneously(with:
+                DragGesture()
+                    .updating($dragLive) { value, state, _ in state = value.translation }
+                    .onEnded { value in
+                        pan.width += value.translation.width
+                        pan.height += value.translation.height
+                    }
+            )
+    }
+
+    private var fitButton: some View {
+        Button {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
+                zoom = 1; pan = .zero; selectedWallID = nil
+            }
+        } label: {
+            Image(systemName: "viewfinder")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Brand.textPrimary)
+                .frame(width: 40, height: 40)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(Brand.hairline, lineWidth: 0.5))
+        }
+        .padding(16)
+    }
+
+    // MARK: - Transform (shared by draw + hit-test)
+
+    private func transform(base: PlanGeometry.Transform, size: CGSize) -> PlanGeometry.Transform {
+        let z = effectiveZoom
+        let c = CGPoint(x: size.width / 2, y: size.height / 2)
+        return PlanGeometry.Transform(
+            origin: base.origin,
+            scale: base.scale * z,
+            offset: CGPoint(x: c.x + (base.offset.x - c.x) * z + effectivePan.width,
+                            y: c.y + (base.offset.y - c.y) * z + effectivePan.height)
         )
-            .onTapGesture(count: 2) {
-                withAnimation(.easeInOut(duration: 0.3)) { zoom = 1; pan = .zero }
+    }
+
+    private func selectWall(at point: CGPoint, in size: CGSize) {
+        guard let base = PlanGeometry.fit(room, in: size, padding: 28, maxScale: 240,
+                                          includeObjects: showFurniture) else { return }
+        let t = transform(base: base, size: size)
+        let world = t.unapply(point)
+        var best: (id: UUID, dist: Double)?
+        for wall in room.walls {
+            let d = FloorGeometry.distance(from: world, to: wall)
+            if best == nil || d < best!.dist { best = (wall.id, d) }
+        }
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            if let best, best.dist < 0.5 {
+                selectedWallID = (selectedWallID == best.id) ? nil : best.id
+            } else {
+                selectedWallID = nil
             }
         }
     }
@@ -52,89 +128,91 @@ struct FloorPlanView: View {
     // MARK: - Drawing
 
     private func draw(_ context: GraphicsContext, size: CGSize) {
-        let paper = Color(.secondarySystemBackground)
+        context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(cPaper))
         guard let base = PlanGeometry.fit(room, in: size, padding: 28, maxScale: 240,
-                                          includeObjects: showFurniture) else {
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(paper))
-            return
+                                          includeObjects: showFurniture) else { return }
+        let t = transform(base: base, size: size)
+
+        drawGrid(context, size: size, t: t)
+
+        let ink = PlanInk(paper: cPaper, floor: cFloor, wall: cWall, door: cDoor, window: cWindow)
+        FloorPlanRenderer.drawRoom(room, into: context, t: t, ink: ink, showFurniture: showFurniture)
+
+        if let id = selectedWallID, let wall = room.walls.first(where: { $0.id == id }) {
+            let centroid = PlanGeometry.centroid(room)
+            drawSelection(context, wall: wall, t: t, centroid: centroid)
         }
-        // Anchor zoom about the view CENTER (not the bbox-min corner) so pinching
-        // magnifies in place instead of shoving the plan off-screen.
-        let z = effectiveZoom
-        let c = CGPoint(x: size.width / 2, y: size.height / 2)
-        let t = PlanGeometry.Transform(
-            origin: base.origin,
-            scale: base.scale * z,
-            offset: CGPoint(x: c.x + (base.offset.x - c.x) * z + effectivePan.width,
-                            y: c.y + (base.offset.y - c.y) * z + effectivePan.height)
-        )
-        let centroid = PlanGeometry.centroid(room)
-        let dark = colorScheme == .dark
-        let ink = Color.primary
-        let accent = Color.accentColor
-
-        // 1) Paper background (defines the page; openings knock out to this color)
-        context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(paper))
-
-        // 2) Grid
-        drawGrid(context, size: size, t: t, ink: ink, dark: dark)
-
-        // 3) Floor poché
-        if let poly = PlanGeometry.floorPolygon(room) {
-            var path = Path()
-            path.addLines(poly.map { t.apply($0) })
-            path.closeSubpath()
-            context.fill(path, with: .color(ink.opacity(dark ? 0.10 : 0.05)))
-        }
-
-        // 4) Wall bodies (poché via thick stroke)
-        for wall in room.walls {
-            var p = Path()
-            p.move(to: t.apply(wall.start))
-            p.addLine(to: t.apply(wall.end))
-            let wpt = max(t.points(wall.thickness), 2)
-            context.stroke(p, with: .color(ink.opacity(dark ? 0.92 : 0.90)),
-                           style: StrokeStyle(lineWidth: wpt, lineCap: .square, lineJoin: .miter))
-        }
-
-        // 5) Openings (knock-out + symbols)
-        for opening in room.openings {
-            guard let seg = PlanGeometry.openingSegment(opening, in: room, interiorReference: centroid)
-            else { continue }
-            drawOpening(context, opening: opening, seg: seg, t: t, ink: ink, paper: paper)
-        }
-
-        // 6) Furniture footprints — hidden until the interior-design milestone.
-        if showFurniture {
-            for obj in room.detectedObjects {
-                drawObject(context, obj: obj, t: t, accent: accent, dark: dark)
-            }
-        }
-
-        // 7) Dimensions
-        for wall in room.walls {
-            drawDimension(context, wall: wall, t: t, centroid: centroid)
-        }
-
-        // 8) Scale bar (chrome)
-        drawScaleBar(context, size: size, t: t, ink: ink)
     }
 
-    private func drawGrid(_ context: GraphicsContext, size: CGSize, t: PlanGeometry.Transform,
-                          ink: Color, dark: Bool) {
-        let topLeft = t.unapply(.zero)
-        let bottomRight = t.unapply(CGPoint(x: size.width, y: size.height))
-        let minX = min(topLeft.x, bottomRight.x), maxX = max(topLeft.x, bottomRight.x)
-        let minZ = min(topLeft.z, bottomRight.z), maxZ = max(topLeft.z, bottomRight.z)
+    private func drawSelection(_ context: GraphicsContext, wall: Wall,
+                               t: PlanGeometry.Transform, centroid: Point2D) {
+        let a = t.apply(wall.start), b = t.apply(wall.end)
+        var hl = Path(); hl.move(to: a); hl.addLine(to: b)
+        let wpt = max(t.points(wall.thickness), 3) + 5
+        context.stroke(hl, with: .color(cSel.opacity(0.92)),
+                       style: StrokeStyle(lineWidth: wpt, lineCap: .round))
 
-        var step: Double = t.points(1) < 14 ? 5 : 1
-        let span = max(maxX - minX, maxZ - minZ)
-        while step > 0, span / step > 120 { step *= 2 }     // cap line count
+        let d = PlanGeometry.dimensionLabel(for: wall, interiorReference: centroid,
+                                            text: MeasurementFormat.meters(wall.length))
+        let mid = t.apply(d.midpoint)
+        let nTip = t.apply(d.midpoint + d.outwardNormal)
+        var nx = nTip.x - mid.x, ny = nTip.y - mid.y
+        let nl = hypot(nx, ny); if nl > 0 { nx /= nl; ny /= nl }
+        let pillCenter = CGPoint(x: mid.x + nx * 28, y: mid.y + ny * 28)
+
+        let resolved = context.resolve(
+            Text(d.text).font(.system(size: 14, weight: .heavy)).foregroundColor(.white)
+        )
+        let ts = resolved.measure(in: CGSize(width: 240, height: 60))
+        let w = ts.width + 22, h = ts.height + 12
+        let rect = CGRect(x: pillCenter.x - w / 2, y: pillCenter.y - h / 2, width: w, height: h)
+        context.fill(Capsule().path(in: rect), with: .color(cSel))
+        context.draw(resolved, at: pillCenter, anchor: .center)
+    }
+
+    // MARK: - Dynamic metric grid
+
+    /// Metric "graph paper" whose cell size adapts to zoom: 1 m → 50 → 10 → 5 → 2 → 1 cm
+    /// as you zoom in. The finest tier fades in smoothly; the coarser tier stays solid.
+    private func drawGrid(_ context: GraphicsContext, size: CGSize, t: PlanGeometry.Transform) {
+        let ppm = t.scale
+        guard ppm > 0 else { return }
+        let steps: [Double] = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10]
+        let target: CGFloat = 20
+
+        guard let i = steps.firstIndex(where: { CGFloat($0) * ppm >= target }) else { return }
+        let minor = steps[i]
+        let major = i + 1 < steps.count ? steps[i + 1] : minor * 5
+        let minorSpacing = CGFloat(minor) * ppm
+        let fade = Double(min(max(minorSpacing / target - 1.0, 0), 1))
+
+        let tl = t.unapply(.zero)
+        let br = t.unapply(CGPoint(x: size.width, y: size.height))
+        let minX = min(tl.x, br.x), maxX = max(tl.x, br.x)
+        let minZ = min(tl.z, br.z), maxZ = max(tl.z, br.z)
+        let ink = dark ? Color.white : Brand.ink
+
+        gridLines(context, step: minor, minX: minX, maxX: maxX, minZ: minZ, maxZ: maxZ, t: t,
+                  color: ink.opacity((dark ? 0.06 : 0.05) * fade), width: 0.5)
+        gridLines(context, step: major, minX: minX, maxX: maxX, minZ: minZ, maxZ: maxZ, t: t,
+                  color: ink.opacity(dark ? 0.13 : 0.09), width: 0.75)
+
+        let cell = fade > 0.35 ? minor : major
+        let resolved = context.resolve(
+            Text(gridUnitLabel(cell))
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(Brand.textFaint)
+        )
+        context.draw(resolved, at: CGPoint(x: 14, y: size.height - 12), anchor: .bottomLeading)
+    }
+
+    private func gridLines(_ context: GraphicsContext, step: Double,
+                           minX: Double, maxX: Double, minZ: Double, maxZ: Double,
+                           t: PlanGeometry.Transform, color: Color, width: CGFloat) {
         guard step > 0 else { return }
-
-        let color = ink.opacity(dark ? 0.08 : 0.05)
-        let style = StrokeStyle(lineWidth: 0.5)
-
+        let span = max(maxX - minX, maxZ - minZ)
+        guard span / step <= 500 else { return }
+        let style = StrokeStyle(lineWidth: width)
         var x = (minX / step).rounded(.down) * step
         while x <= maxX {
             var p = Path()
@@ -153,216 +231,9 @@ struct FloorPlanView: View {
         }
     }
 
-    private func drawOpening(_ context: GraphicsContext, opening: Opening,
-                             seg: PlanGeometry.OpeningSegment, t: PlanGeometry.Transform,
-                             ink: Color, paper: Color) {
-        let pa = t.apply(seg.start)
-        let pb = t.apply(seg.end)
-        let wpt = max(t.points(seg.thickness), 2)
-
-        // a) knock the hole in the wall band
-        var hole = Path()
-        hole.move(to: pa); hole.addLine(to: pb)
-        context.stroke(hole, with: .color(paper), style: StrokeStyle(lineWidth: wpt + 1, lineCap: .butt))
-
-        // jamb ticks across the wall thickness at each end
-        let half = seg.thickness / 2
-        func jamb(at worldPoint: Point2D) {
-            let p1 = t.apply(worldPoint + seg.interiorNormal * half)
-            let p2 = t.apply(worldPoint - seg.interiorNormal * half)
-            var p = Path(); p.move(to: p1); p.addLine(to: p2)
-            context.stroke(p, with: .color(ink.opacity(0.8)), style: StrokeStyle(lineWidth: 1))
-        }
-
-        switch opening.type {
-        case .opening:
-            jamb(at: seg.start); jamb(at: seg.end)
-        case .window:
-            var center = Path(); center.move(to: pa); center.addLine(to: pb)
-            context.stroke(center, with: .color(ink.opacity(0.7)), style: StrokeStyle(lineWidth: 1.5))
-            jamb(at: seg.start); jamb(at: seg.end)
-        case .door:
-            drawDoor(context, seg: seg, t: t, ink: ink)
-            jamb(at: seg.start); jamb(at: seg.end)
-        }
-    }
-
-    private func drawDoor(_ context: GraphicsContext, seg: PlanGeometry.OpeningSegment,
-                          t: PlanGeometry.Transform, ink: Color) {
-        let hinge = t.apply(seg.start)
-        let latch = t.apply(seg.end)
-        let radius = hypot(latch.x - hinge.x, latch.y - hinge.y)
-        guard radius > 1 else { return }
-        let closed = atan2(latch.y - hinge.y, latch.x - hinge.x)
-
-        // interior direction in screen space
-        let cScreen = t.apply(seg.center)
-        let inTip = t.apply(seg.center + seg.interiorNormal)
-        let inAng = atan2(inTip.y - cScreen.y, inTip.x - cScreen.x)
-        let plus = closed + .pi / 2
-        let minus = closed - .pi / 2
-        let open = abs(angleDiff(plus, inAng)) < abs(angleDiff(minus, inAng)) ? plus : minus
-
-        // leaf
-        var leaf = Path()
-        leaf.move(to: hinge)
-        leaf.addLine(to: CGPoint(x: hinge.x + radius * cos(open), y: hinge.y + radius * sin(open)))
-        context.stroke(leaf, with: .color(ink.opacity(0.8)), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-
-        // dashed swing arc, bulging toward the interior
-        if radius > 10 {
-            var arc = Path()
-            arc.addArc(center: hinge, radius: radius,
-                       startAngle: .radians(closed), endAngle: .radians(open),
-                       clockwise: open < closed)
-            context.stroke(arc, with: .color(ink.opacity(0.45)),
-                           style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-        }
-    }
-
-    private func drawObject(_ context: GraphicsContext, obj: DetectedObject,
-                            t: PlanGeometry.Transform, accent: Color, dark: Bool) {
-        let corners = PlanGeometry.footprintCorners(obj).map { t.apply($0) }
-        guard corners.count == 4 else { return }
-        var path = Path()
-        path.addLines(corners)
-        path.closeSubpath()
-        context.fill(path, with: .color(accent.opacity(dark ? 0.22 : 0.14)))
-        context.stroke(path, with: .color(accent.opacity(0.9)),
-                       style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
-
-        // facing tick (constant length, toward local +z)
-        let center = t.apply(obj.center)
-        let facingTip = t.apply(obj.center + PlanGeometry.facingDirection(obj))
-        let dx = facingTip.x - center.x, dy = facingTip.y - center.y
-        let len = hypot(dx, dy)
-        if len > 0.5 {
-            let ux = dx / len, uy = dy / len
-            var tick = Path()
-            tick.move(to: center)
-            tick.addLine(to: CGPoint(x: center.x + ux * 14, y: center.y + uy * 14))
-            context.stroke(tick, with: .color(accent.opacity(0.9)),
-                           style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-        }
-
-        // label, only if the footprint is wide enough to read
-        let footprintWidth = hypot(corners[1].x - corners[0].x, corners[1].y - corners[0].y)
-        if footprintWidth > 36 {
-            let resolved = context.resolve(
-                Text(obj.category.capitalized)
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-            )
-            context.draw(resolved, at: center, anchor: .center)
-        }
-    }
-
-    private func drawDimension(_ context: GraphicsContext, wall: Wall,
-                               t: PlanGeometry.Transform, centroid: Point2D) {
-        let a = t.apply(wall.start)
-        let b = t.apply(wall.end)
-        let screenLen = hypot(b.x - a.x, b.y - a.y)
-        guard screenLen > 40 else { return }     // declutter short walls
-
-        let d = PlanGeometry.dimensionLabel(for: wall, interiorReference: centroid,
-                                            text: MeasurementFormat.meters(wall.length))
-        // outward normal in screen space
-        let mid = t.apply(d.midpoint)
-        let nTip = t.apply(d.midpoint + d.outwardNormal)
-        var nx = nTip.x - mid.x, ny = nTip.y - mid.y
-        let nlen = hypot(nx, ny)
-        guard nlen > 0 else { return }
-        nx /= nlen; ny /= nlen
-
-        let gap: CGFloat = 18
-        let a2 = CGPoint(x: a.x + nx * gap, y: a.y + ny * gap)
-        let b2 = CGPoint(x: b.x + nx * gap, y: b.y + ny * gap)
-        let col = Color.secondary
-
-        // dimension line
-        var dim = Path(); dim.move(to: a2); dim.addLine(to: b2)
-        context.stroke(dim, with: .color(col), style: StrokeStyle(lineWidth: 1, lineCap: .butt))
-
-        // extension lines
-        var ext = Path()
-        ext.move(to: a); ext.addLine(to: a2)
-        ext.move(to: b); ext.addLine(to: b2)
-        context.stroke(ext, with: .color(col.opacity(0.55)), style: StrokeStyle(lineWidth: 0.75))
-
-        // 45deg ticks at the ends
-        var dirx = b2.x - a2.x, diry = b2.y - a2.y
-        let dlen = hypot(dirx, diry)
-        if dlen > 0 { dirx /= dlen; diry /= dlen }
-        func tick(at p: CGPoint) {
-            let tx = dirx + nx, ty = diry + ny
-            let tl = hypot(tx, ty)
-            guard tl > 0 else { return }
-            let ux = tx / tl, uy = ty / tl
-            var tk = Path()
-            tk.move(to: CGPoint(x: p.x - ux * 4, y: p.y - uy * 4))
-            tk.addLine(to: CGPoint(x: p.x + ux * 4, y: p.y + uy * 4))
-            context.stroke(tk, with: .color(col), style: StrokeStyle(lineWidth: 1))
-        }
-        tick(at: a2); tick(at: b2)
-
-        // label, centered on the dim line, pushed slightly further out, kept upright
-        let labelPos = CGPoint(x: (a2.x + b2.x) / 2 + nx * 9, y: (a2.y + b2.y) / 2 + ny * 9)
-        let angle = atan2(Double(b.y - a.y), Double(b.x - a.x))
-        drawRotatedLabel(context, d.text, at: labelPos, angle: angle)
-    }
-
-    private func drawScaleBar(_ context: GraphicsContext, size: CGSize,
-                              t: PlanGeometry.Transform, ink: Color) {
-        let candidates: [Double] = [0.1, 0.2, 0.5, 1, 2, 5, 10]
-        guard let meters = candidates.first(where: { t.points($0) >= 60 && t.points($0) <= 130 })
-                ?? candidates.last(where: { t.points($0) <= 130 })
-                ?? candidates.first else { return }
-        let barLen = t.points(meters)
-        guard barLen > 8 else { return }
-
-        let x0: CGFloat = 16
-        let y0: CGFloat = size.height - 18
-        let color = ink.opacity(0.7)
-
-        // alternating filled/empty half-meter (or half-step) segments
-        let segments = 4
-        let segLen = barLen / CGFloat(segments)
-        for i in 0..<segments {
-            let rect = CGRect(x: x0 + CGFloat(i) * segLen, y: y0 - 3, width: segLen, height: 6)
-            if i % 2 == 0 {
-                context.fill(Path(rect), with: .color(color))
-            } else {
-                context.stroke(Path(rect), with: .color(color), style: StrokeStyle(lineWidth: 0.75))
-            }
-        }
-        let label = meters < 1 ? String(format: "%.1f m", meters) : String(format: "%.0f m", meters)
-        let resolved = context.resolve(
-            Text(label).font(.system(size: 10, weight: .medium).monospacedDigit())
-                .foregroundColor(.secondary)
-        )
-        context.draw(resolved, at: CGPoint(x: x0 + barLen + 6, y: y0), anchor: .leading)
-    }
-
-    private func drawRotatedLabel(_ context: GraphicsContext, _ string: String,
-                                  at point: CGPoint, angle: Double) {
-        var a = angle
-        if a > .pi / 2 || a < -.pi / 2 { a += .pi }   // keep upright
-        var layer = context
-        layer.translateBy(x: point.x, y: point.y)
-        layer.rotate(by: .radians(a))
-        let resolved = layer.resolve(
-            Text(string)
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .foregroundColor(.secondary)
-        )
-        layer.draw(resolved, at: .zero, anchor: .center)
-    }
-
-    private func angleDiff(_ a: Double, _ b: Double) -> Double {
-        var d = a - b
-        while d > .pi { d -= 2 * .pi }
-        while d < -.pi { d += 2 * .pi }
-        return d
+    private func gridUnitLabel(_ meters: Double) -> String {
+        if meters < 1 { return "\(Int((meters * 100).rounded())) cm" }
+        return meters == meters.rounded() ? "\(Int(meters)) m" : String(format: "%.1f m", meters)
     }
 }
 
@@ -374,12 +245,12 @@ private extension CGFloat {
 
 #Preview("Rectangle") {
     FloorPlanView(room: .mock)
-        .frame(height: 340)
-        .padding()
+        .frame(height: 360)
+        .background(Brand.surface)
 }
 
 #Preview("L-shaped") {
     FloorPlanView(room: .mockLShaped)
-        .frame(height: 340)
-        .padding()
+        .frame(height: 360)
+        .background(Brand.surface)
 }
