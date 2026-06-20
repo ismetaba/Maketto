@@ -124,15 +124,23 @@ struct WholeHomePlanView: View {
 
         FloorPlanRenderer.drawGrid(context, size: size, t: t, dark: dark)
 
-        // Rooms (type-keyed fills); selected room gets a brighter fill.
+        // Floor fills per room (type-keyed; selected room reads warmer).
         for room in rooms {
-            let selected = room.id == selectedRoomID
-            let ink = PlanInk(paper: cPaper, floor: floorColor(room.kind, selected: selected),
-                              wall: cWall, door: cDoor, window: cWindow)
-            FloorPlanRenderer.drawRoom(room, into: context, t: t, ink: ink, showFurniture: false)
+            FloorPlanRenderer.drawFloor(room, into: context, t: t,
+                                        floor: floorColor(room.kind, selected: room.id == selectedRoomID))
         }
 
-        // Selection outline on top of all fills.
+        // Walls + openings drawn ONCE from the de-duplicated union, so a shared
+        // wall never doubles up into a crossing sliver.
+        let ink = PlanInk(paper: cPaper, floor: .clear, wall: cWall, door: cDoor, window: cWindow)
+        FloorPlanRenderer.drawStructure(
+            walls: PlanGeometry.deduped(rooms.flatMap(\.walls)),
+            openings: PlanGeometry.deduped(rooms.flatMap(\.openings)),
+            centroid: HomeGeometry.bboxCenter(of: rooms),
+            objects: [], into: context, t: t, ink: ink, showFurniture: false
+        )
+
+        // Selection outline on top of all fills/walls.
         if let id = selectedRoomID, let room = rooms.first(where: { $0.id == id }),
            let poly = PlanGeometry.floorPolygon(room) {
             var p = Path(); p.addLines(poly.map { t.apply($0) }); p.closeSubpath()

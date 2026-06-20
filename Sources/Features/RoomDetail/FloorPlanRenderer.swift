@@ -16,16 +16,28 @@ struct PlanInk {
 enum FloorPlanRenderer {
     static func drawRoom(_ room: RoomModel, into context: GraphicsContext,
                          t: PlanGeometry.Transform, ink: PlanInk, showFurniture: Bool) {
-        let centroid = PlanGeometry.centroid(room)
+        drawFloor(room, into: context, t: t, floor: ink.floor)
+        drawStructure(walls: room.walls, openings: room.openings,
+                      centroid: PlanGeometry.centroid(room), objects: room.detectedObjects,
+                      into: context, t: t, ink: ink, showFurniture: showFurniture)
+    }
 
-        if let poly = PlanGeometry.floorPolygon(room) {
-            var path = Path()
-            path.addLines(poly.map { t.apply($0) })
-            path.closeSubpath()
-            context.fill(path, with: .color(ink.floor))
-        }
+    /// Floor poché only (the whole-home plan draws fills per room, walls once).
+    static func drawFloor(_ room: RoomModel, into context: GraphicsContext,
+                          t: PlanGeometry.Transform, floor: Color) {
+        guard let poly = PlanGeometry.floorPolygon(room) else { return }
+        var path = Path()
+        path.addLines(poly.map { t.apply($0) })
+        path.closeSubpath()
+        context.fill(path, with: .color(floor))
+    }
 
-        for wall in room.walls {
+    /// Walls + openings (+ optional furniture) from explicit lists. The whole-home
+    /// plan passes a de-duplicated union so shared walls draw exactly once.
+    static func drawStructure(walls: [Wall], openings: [Opening], centroid: Point2D,
+                              objects: [DetectedObject], into context: GraphicsContext,
+                              t: PlanGeometry.Transform, ink: PlanInk, showFurniture: Bool) {
+        for wall in walls {
             var p = Path()
             p.move(to: t.apply(wall.start))
             p.addLine(to: t.apply(wall.end))
@@ -33,15 +45,13 @@ enum FloorPlanRenderer {
             context.stroke(p, with: .color(ink.wall),
                            style: StrokeStyle(lineWidth: wpt, lineCap: .square, lineJoin: .miter))
         }
-
-        for opening in room.openings {
-            guard let seg = PlanGeometry.openingSegment(opening, in: room, interiorReference: centroid)
+        for opening in openings {
+            guard let seg = PlanGeometry.openingSegment(opening, walls: walls, interiorReference: centroid)
             else { continue }
             drawOpening(context, opening: opening, seg: seg, t: t, ink: ink)
         }
-
         if showFurniture {
-            for obj in room.detectedObjects {
+            for obj in objects {
                 drawObject(context, obj: obj, t: t)
             }
         }

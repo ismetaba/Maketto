@@ -194,6 +194,26 @@ enum PlanGeometry {
         return openingSegment(opening, on: wall, interiorReference: centroid)
     }
 
+    /// Resolve the wall from an explicit wall list (used by the merged whole-home draw).
+    static func openingSegment(
+        _ opening: Opening,
+        walls: [Wall],
+        interiorReference centroid: Point2D
+    ) -> OpeningSegment? {
+        guard let wall = walls.first(where: { $0.id == opening.onWallId }) else { return nil }
+        return openingSegment(opening, on: wall, interiorReference: centroid)
+    }
+
+    /// De-duplicate identifiable items by id (shared walls/openings appear in two
+    /// rooms with the same RoomPlan identifier; draw each once to avoid doubling).
+    static func deduped<T: Identifiable>(_ items: [T]) -> [T] where T.ID == UUID {
+        var seen = Set<UUID>()
+        var out: [T] = []
+        out.reserveCapacity(items.count)
+        for item in items where seen.insert(item.id).inserted { out.append(item) }
+        return out
+    }
+
     // MARK: - 2) Object footprint corners
 
     /// The 4 world-space corners of a detected object's footprint rectangle,
