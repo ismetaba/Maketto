@@ -12,7 +12,7 @@ struct USDZSceneView: UIViewRepresentable {
         view.allowsCameraControl = true
         view.autoenablesDefaultLighting = true
         view.antialiasingMode = .multisampling4X
-        view.backgroundColor = .secondarySystemBackground
+        view.backgroundColor = UIColor(Brand.surface)   // match the app's map paper
         view.scene = try? SCNScene(url: url)
         return view
     }

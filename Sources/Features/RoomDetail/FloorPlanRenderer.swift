@@ -185,6 +185,8 @@ enum FloorPlanRenderer {
 
     private static func gridUnitLabel(_ meters: Double) -> String {
         if meters < 1 { return "\(Int((meters * 100).rounded())) cm" }
-        return meters == meters.rounded() ? "\(Int(meters)) m" : String(format: "%.1f m", meters)
+        return meters == meters.rounded()
+            ? "\(Int(meters)) m"
+            : String(format: "%.1f m", locale: MeasurementFormat.locale, meters)
     }
 }

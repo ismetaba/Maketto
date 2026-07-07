@@ -85,10 +85,11 @@ final class HomeScanner {
         }
     }
 
-    fileprivate func didFail(_ message: String) {
+    fileprivate func didFail(_: String) {
         guard !didConsumeCapture else { return }
         didConsumeCapture = true
-        state = .failed(message)
+        // RoomPlan's localizedDescription is developer-facing; show our own copy.
+        state = .failed("Tarama tamamlanamadı. Işığın yeterli olduğundan emin olun ve evi yavaşça, tüm odaları kapsayarak yeniden tarayın.")
     }
     #endif
 }

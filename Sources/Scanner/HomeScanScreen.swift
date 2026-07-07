@@ -1,10 +1,12 @@
 import SwiftUI
 
-/// Whole-home scan: walk room to room, "Sonraki Oda" between, "Bitir" to merge.
+/// Whole-home scan: walk room to room in ONE capture, then "Taramayı Bitir".
 struct HomeScanScreen: View {
     @Environment(RoomStore.self) private var store
     @Environment(Router.self) private var router
     @State private var scanner = HomeScanner()
+    @State private var pulse = false
+    @State private var showExitConfirm = false
 
     var body: some View {
         content
@@ -55,19 +57,33 @@ struct HomeScanScreen: View {
             HomeCaptureViewRepresentable(scanner: scanner).ignoresSafeArea()
 
             HStack {
-                darkCircle("chevron.left") { router.pop() }
+                CircleIconButton("chevron.left", dark: true, accessibilityLabel: "Geri") {
+                    showExitConfirm = true
+                }
                 Spacer()
             }
             .padding(.horizontal, 16)
             .padding(.top, 6)
 
+            // The hint lives at the BOTTOM: RoomPlan draws its own coaching
+            // text top-centre, and the two must never fight for the same spot.
             VStack {
-                hintPill.padding(.top, 64)
                 Spacer()
-                Button { scanner.finish() } label: { Text("Bitir") }
-                    .buttonStyle(ClayButtonStyle())
-                    .padding(.bottom, 44)
+                hintPill.padding(.bottom, 14)
+                Button { scanner.finish() } label: {
+                    Label("Taramayı Bitir", systemImage: "checkmark")
+                }
+                .buttonStyle(ClayButtonStyle())
+                .padding(.bottom, 30)
             }
+        }
+        .onAppear { pulse = true }
+        .confirmationDialog("Taramadan çıkılsın mı?", isPresented: $showExitConfirm,
+                            titleVisibility: .visible) {
+            Button("Çık", role: .destructive) { router.pop() }
+            Button("Taramaya Devam", role: .cancel) {}
+        } message: {
+            Text("Bu tarama kaydedilmeden silinir.")
         }
         #else
         ContentUnavailableView("RoomPlan yok", systemImage: "xmark.octagon")
@@ -76,7 +92,12 @@ struct HomeScanScreen: View {
 
     private var hintPill: some View {
         HStack(spacing: 9) {
-            Circle().fill(Color(hex: 0xA7E8C6)).frame(width: 8, height: 8)
+            Circle()
+                .fill(Color(hex: 0xA7E8C6))
+                .frame(width: 8, height: 8)
+                .opacity(pulse ? 0.35 : 1)
+                .scaleEffect(pulse ? 0.75 : 1.1)
+                .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
             Text("Tüm evi dolaşın — Maketto odalara böler")
                 .font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
         }
@@ -88,6 +109,7 @@ struct HomeScanScreen: View {
         ZStack {
             Brand.surface.ignoresSafeArea()
             VStack(spacing: 18) {
+                MakettoLogo(size: 46)
                 ProgressView().controlSize(.large).tint(Brand.clay)
                 Text("Eviniz birleştiriliyor…")
                     .font(.display(26)).foregroundStyle(Brand.textPrimary)
@@ -114,16 +136,6 @@ struct HomeScanScreen: View {
                 Button(action: action) { Text(button) }
                     .buttonStyle(EvergreenButtonStyle()).padding(.top, 8)
             }
-        }
-    }
-
-    private func darkCircle(_ icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 40, height: 40)
-                .background(Color.black.opacity(0.4), in: Circle())
         }
     }
 }

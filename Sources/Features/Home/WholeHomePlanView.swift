@@ -1,31 +1,36 @@
 import SwiftUI
 import UIKit
 
-/// Whole-home blueprint plan: many rooms in one shared frame, each with a
-/// type-keyed floor fill and a centred name + area label. Tap a room to select
-/// (rename in review, open in home detail). Reuses FloorPlanRenderer.
+/// Whole-home map: many rooms in one shared frame, each with its own soft tint
+/// (robot-vacuum-map style, tuned to the Maketto palette) and a centred
+/// name + area label. Walls and openings are drawn once from the de-duplicated
+/// union. Tap a room to select it; tap empty paper to deselect.
+///
+/// Pan/zoom live in a `PlanCamera` that the SCREEN owns, so floating chrome
+/// (zoom buttons, fit) and the canvas gestures drive one shared camera.
+/// Reuses FloorPlanRenderer.
 struct WholeHomePlanView: View {
     let rooms: [RoomModel]
+    /// Interactive maps get gestures, the metric grid and room labels; a
+    /// non-interactive plan is a calm static thumbnail.
     var interactive: Bool = true
     var selectedRoomID: UUID?
-    var onSelect: ((UUID) -> Void)?
+    /// External camera; when nil (thumbnails, previews) an internal one is used.
+    var camera: PlanCamera?
+    /// Called with the tapped room, or nil when empty paper was tapped.
+    var onSelect: ((UUID?) -> Void)?
 
-    @State private var zoom: CGFloat = 1
-    @State private var pan: CGSize = .zero
+    @State private var fallbackCamera = PlanCamera()
     @GestureState private var pinch: CGFloat = 1
     @GestureState private var dragLive: CGSize = .zero
     @Environment(\.colorScheme) private var colorScheme
 
-    private var effectiveZoom: CGFloat { zoom * pinch }
-    private var effectivePan: CGSize {
-        CGSize(width: pan.width + dragLive.width, height: pan.height + dragLive.height)
-    }
+    private var cam: PlanCamera { camera ?? fallbackCamera }
     private var dark: Bool { colorScheme == .dark }
 
     private var cWall: Color { Color(light: Brand.evergreen, dark: Color(hex: 0xD9C088)) }
     private var cDoor: Color { Color(light: Color(hex: 0x99793A), dark: Color(hex: 0xC8A862)) }
     private var cWindow: Color { Color(light: Color(hex: 0x5E7E61), dark: Color(hex: 0xA8BFAB)) }
-    private var cSel: Color { Color(light: Brand.clay, dark: Color(hex: 0xE0B68F)) }
     private var cPaper: Color { Brand.surface }
 
     var body: some View {
@@ -36,65 +41,46 @@ struct WholeHomePlanView: View {
                 Color.clear
             }
         } else if interactive {
+            // Read the camera at BODY level so observation ties re-rendering to
+            // it; the canvas then interpolates plain values.
+            let zoom = cam.zoom * pinch
+            let pan = CGSize(width: cam.pan.width + dragLive.width,
+                             height: cam.pan.height + dragLive.height)
             GeometryReader { geo in
-                Canvas { context, size in draw(context, size: size) }
-                    .contentShape(Rectangle())
-                    .gesture(navigationGesture)
-                    .simultaneousGesture(
-                        SpatialTapGesture().onEnded { value in
-                            selectRoom(at: value.location, in: geo.size)
-                        }
-                    )
-                    .overlay(alignment: .bottomTrailing) { fitButton }
+                AnimatedPlanCanvas(zoom: zoom, pan: pan) { context, size, z, p in
+                    draw(context, size: size, zoom: z, pan: p)
+                }
+                .contentShape(Rectangle())
+                .gesture(navigationGesture)
+                .simultaneousGesture(
+                    SpatialTapGesture().onEnded { value in
+                        selectRoom(at: value.location, in: geo.size)
+                    }
+                )
             }
         } else {
-            Canvas { context, size in draw(context, size: size) }
-                .allowsHitTesting(false)
+            Canvas { context, size in
+                draw(context, size: size, zoom: 1, pan: .zero)
+            }
+            .allowsHitTesting(false)
         }
     }
 
     private var navigationGesture: some Gesture {
         MagnifyGesture()
             .updating($pinch) { value, state, _ in state = value.magnification }
-            .onEnded { value in zoom = (zoom * value.magnification).clamped(0.4, 8) }
+            .onEnded { value in cam.commitPinch(value.magnification) }
             .simultaneously(with:
                 DragGesture()
                     .updating($dragLive) { value, state, _ in state = value.translation }
-                    .onEnded { value in
-                        pan.width += value.translation.width
-                        pan.height += value.translation.height
-                    }
+                    .onEnded { value in cam.commitPan(value.translation) }
             )
     }
 
-    private var fitButton: some View {
-        Button {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) { zoom = 1; pan = .zero }
-        } label: {
-            Image(systemName: "viewfinder")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Brand.textPrimary)
-                .frame(width: 40, height: 40)
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay(Circle().strokeBorder(Brand.hairline, lineWidth: 0.5))
-        }
-        .padding(16)
-    }
-
-    private func transform(base: PlanGeometry.Transform, size: CGSize) -> PlanGeometry.Transform {
-        let z = effectiveZoom
-        let c = CGPoint(x: size.width / 2, y: size.height / 2)
-        return PlanGeometry.Transform(
-            origin: base.origin,
-            scale: base.scale * z,
-            offset: CGPoint(x: c.x + (base.offset.x - c.x) * z + effectivePan.width,
-                            y: c.y + (base.offset.y - c.y) * z + effectivePan.height)
-        )
-    }
-
     private func selectRoom(at point: CGPoint, in size: CGSize) {
+        guard let onSelect else { return }
         guard let base = PlanGeometry.fit(rooms, in: size, padding: 28, maxScale: 120) else { return }
-        let t = transform(base: base, size: size)
+        let t = base.composed(in: size, zoom: cam.zoom, pan: cam.pan)
         let world = t.unapply(point)
 
         // Among rooms whose polygon contains the tap, pick the smallest (innermost).
@@ -105,29 +91,36 @@ struct WholeHomePlanView: View {
                 if hit == nil || a < hit!.area { hit = (room.id, a) }
             }
         }
-        if let hit { onSelect?(hit.id); return }
+        if let hit { onSelect(hit.id); return }
 
-        // Fallback so every room stays tappable: nearest room centre to the tap.
-        var nearest: (id: UUID, dist: Double)?
+        // Rooms whose walls never closed into a polygon stay reachable across
+        // their whole footprint (bbox + a little slop); a tap on empty paper
+        // deselects.
+        var boxHit: (id: UUID, area: Double)?
         for room in rooms {
-            guard let c = PlanGeometry.roomCenter(room) else { continue }
-            let d = c.distance(to: world)
-            if nearest == nil || d < nearest!.dist { nearest = (room.id, d) }
+            guard PlanGeometry.floorPolygon(room) == nil,
+                  let b = PlanGeometry.worldBounds(room) else { continue }
+            guard b.insetBy(dx: -0.4, dy: -0.4).contains(CGPoint(x: world.x, y: world.z))
+            else { continue }
+            let a = Double(b.width * b.height)
+            if boxHit == nil || a < boxHit!.area { boxHit = (room.id, a) }
         }
-        if let nearest { onSelect?(nearest.id) }
+        onSelect(boxHit?.id)
     }
 
-    private func draw(_ context: GraphicsContext, size: CGSize) {
+    private func draw(_ context: GraphicsContext, size: CGSize, zoom: CGFloat, pan: CGSize) {
         context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(cPaper))
         guard let base = PlanGeometry.fit(rooms, in: size, padding: 28, maxScale: 120) else { return }
-        let t = transform(base: base, size: size)
+        let t = base.composed(in: size, zoom: zoom, pan: pan)
 
-        FloorPlanRenderer.drawGrid(context, size: size, t: t, dark: dark)
+        if interactive {
+            FloorPlanRenderer.drawGrid(context, size: size, t: t, dark: dark)
+        }
 
-        // Floor fills per room (type-keyed; selected room reads warmer).
-        for room in rooms {
+        // Every room gets its own soft tint, stable by position in the home.
+        for (i, room) in rooms.enumerated() {
             FloorPlanRenderer.drawFloor(room, into: context, t: t,
-                                        floor: floorColor(room.kind, selected: room.id == selectedRoomID))
+                                        floor: RoomPalette.tint(i).fill)
         }
 
         // Walls + openings drawn ONCE from the de-duplicated union, so a shared
@@ -140,29 +133,40 @@ struct WholeHomePlanView: View {
             objects: [], into: context, t: t, ink: ink, showFurniture: false
         )
 
-        // Selection outline on top of all fills/walls.
-        if let id = selectedRoomID, let room = rooms.first(where: { $0.id == id }),
-           let poly = PlanGeometry.floorPolygon(room) {
+        // Selection: soft glow + crisp outline in the room's own accent.
+        if let id = selectedRoomID,
+           let idx = rooms.firstIndex(where: { $0.id == id }),
+           let poly = PlanGeometry.floorPolygon(rooms[idx]) {
+            let accent = RoomPalette.tint(idx).accent
             var p = Path(); p.addLines(poly.map { t.apply($0) }); p.closeSubpath()
-            context.stroke(p, with: .color(cSel), style: StrokeStyle(lineWidth: 4, lineJoin: .round))
+            context.stroke(p, with: .color(accent.opacity(0.30)),
+                           style: StrokeStyle(lineWidth: 10, lineJoin: .round))
+            context.stroke(p, with: .color(accent),
+                           style: StrokeStyle(lineWidth: 3.5, lineJoin: .round))
         }
 
-        // Labels last, so neighbouring fills never cover text.
-        for room in rooms { drawLabel(context, room: room, t: t) }
+        // Labels last, so neighbouring fills never cover text (skipped on
+        // static thumbnails, where they'd be unreadably small anyway).
+        if interactive {
+            for (i, room) in rooms.enumerated() {
+                drawLabel(context, room: room, tint: RoomPalette.tint(i), t: t)
+            }
+        }
     }
 
-    private func drawLabel(_ context: GraphicsContext, room: RoomModel, t: PlanGeometry.Transform) {
-        // Every detected room gets a label, even if its walls don't close.
+    private func drawLabel(_ context: GraphicsContext, room: RoomModel,
+                           tint: RoomTint, t: PlanGeometry.Transform) {
         guard let centroid = PlanGeometry.roomCenter(room) else { return }
         let extent = (PlanGeometry.worldBounds(room).map { min($0.width, $0.height) } ?? 0) * t.scale
+        guard extent >= 26 else { return }   // too small at this zoom — keep the map calm
         let center = t.apply(centroid)
 
         let nameText = context.resolve(
             Text(room.name.uppercased())
                 .font(.system(size: 11, weight: .bold))
-                .foregroundColor(Brand.textSecondary)
+                .foregroundColor(tint.accent)
         )
-        if extent < 46 {
+        if extent < 54 {
             context.draw(nameText, at: center, anchor: .center)
             return
         }
@@ -173,32 +177,6 @@ struct WholeHomePlanView: View {
                 .foregroundColor(Brand.textPrimary)
         )
         context.draw(areaText, at: CGPoint(x: center.x, y: center.y + 10), anchor: .center)
-    }
-
-    private func floorColor(_ kind: RoomKind?, selected: Bool) -> Color {
-        let base: Color
-        switch kind ?? .unidentified {
-        case .livingRoom, .diningRoom:
-            base = Color(light: Color(hex: 0xF6EFE0), dark: Color(white: 1, opacity: 0.05))
-        case .bedroom:
-            base = Color(light: Color(hex: 0xF1ECF1), dark: Color(white: 1, opacity: 0.06))
-        case .bathroom, .kitchen:
-            base = Color(light: Color(hex: 0xE8F0EF), dark: Color(hex: 0x87A189).opacity(0.14))
-        case .hallway:
-            base = Color(light: Color(hex: 0xF3EEE3), dark: Color(white: 1, opacity: 0.04))
-        case .balcony:
-            base = Color(light: Color(hex: 0xEAF1EA), dark: Color(hex: 0x87A189).opacity(0.12))
-        case .unidentified:
-            base = Color(light: Color(hex: 0xF7F2EA), dark: Color(white: 1, opacity: 0.045))
-        }
-        // Selected room reads via its outline; nudge the fill a touch warmer.
-        return selected ? Brand.clay.opacity(dark ? 0.16 : 0.12) : base
-    }
-}
-
-private extension CGFloat {
-    func clamped(_ lo: CGFloat, _ hi: CGFloat) -> CGFloat {
-        self < lo ? lo : (self > hi ? hi : self)
     }
 }
 

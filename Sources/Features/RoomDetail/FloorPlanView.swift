@@ -6,9 +6,9 @@ enum PlanTool: String, CaseIterable, Sendable { case move, delete }
 
 /// Blueprint-style top-down floor plan of ONE room (Maketto visual language).
 /// Tap a wall → it highlights and its measurement appears as a pill ON the model.
-/// Pinch to zoom, drag to pan, the fit button re-centers. A dynamic metric grid
-/// sits behind. Per-room drawing is shared with the whole-home plan via
-/// `FloorPlanRenderer`.
+/// Pinch to zoom, drag to pan; external chrome (zoom buttons, fit) drives the
+/// same `PlanCamera`. A dynamic metric grid sits behind. Per-room drawing is
+/// shared with the whole-home plan via `FloorPlanRenderer`.
 ///
 /// When `editing` is non-nil the plan enters edit mode: corner handles appear,
 /// dragging a handle moves every wall that joins there, and the active `editTool`
@@ -20,23 +20,25 @@ struct FloorPlanView: View {
     /// When false (e.g. a library thumbnail) the plan is a static fitted render
     /// with no gestures or controls.
     var interactive: Bool = true
+    /// External camera; when nil (thumbnails, previews) an internal one is used.
+    var camera: PlanCamera?
+    /// Screen regions covered by floating chrome (top bar, docks); the
+    /// measurement pill is clamped inside these so it never renders off-screen
+    /// or under the chrome.
+    var chromeInsets: EdgeInsets = EdgeInsets()
     /// Non-nil puts the plan in edit mode, rendered from this live graph.
     var editing: EditableRoom?
     var editTool: PlanTool = .move
 
-    @State private var zoom: CGFloat = 1
-    @State private var pan: CGSize = .zero
+    @State private var fallbackCamera = PlanCamera()
     @State private var selectedWallID: UUID?
     @State private var activeCorner: UUID?       // corner being dragged
-    @State private var panBase: CGSize?          // pan at drag start (pan mode)
+    @State private var panBase: CGSize?          // camera pan at drag start (pan mode)
     @GestureState private var pinch: CGFloat = 1
     @GestureState private var dragLive: CGSize = .zero
     @Environment(\.colorScheme) private var colorScheme
 
-    private var effectiveZoom: CGFloat { zoom * pinch }
-    private var effectivePan: CGSize {
-        CGSize(width: pan.width + dragLive.width, height: pan.height + dragLive.height)
-    }
+    private var cam: PlanCamera { camera ?? fallbackCamera }
     private var dark: Bool { colorScheme == .dark }
 
     // Blueprint treatment palette (light / dark)
@@ -50,17 +52,22 @@ struct FloorPlanView: View {
     var body: some View {
         if PlanGeometry.worldBounds(room, includeObjects: showFurniture) == nil {
             if interactive {
-                ContentUnavailableView("No Floor Plan", systemImage: "square.dashed")
+                ContentUnavailableView("Plan yok", systemImage: "square.dashed")
             } else {
                 Color.clear
             }
         } else if interactive {
+            // Read camera + live graph at BODY level so observation ties
+            // re-rendering to both; the canvas closure captures plain values.
+            let zoom = cam.zoom * pinch
+            let pan = CGSize(width: cam.pan.width + dragLive.width,
+                             height: cam.pan.height + dragLive.height)
+            let display = editing?.flattened() ?? room
+            let corners = editing.map { Array($0.corners.values) }
             GeometryReader { geo in
-                // Reading the live graph here ties body invalidation to edits.
-                let display = editing?.flattened() ?? room
-                let corners = editing.map { Array($0.corners.values) }
-                Canvas { context, size in
-                    draw(context, size: size, display: display, corners: corners)
+                AnimatedPlanCanvas(zoom: zoom, pan: pan) { context, size, z, p in
+                    draw(context, size: size, zoom: z, pan: p,
+                         display: display, corners: corners)
                 }
                 .contentShape(Rectangle())
                 .gesture(activeGesture(in: geo.size))
@@ -69,11 +76,10 @@ struct FloorPlanView: View {
                         handleTap(at: value.location, in: geo.size)
                     }
                 )
-                .overlay(alignment: .bottomTrailing) { fitButton }
             }
         } else {
             Canvas { context, size in
-                draw(context, size: size, display: room, corners: nil)
+                draw(context, size: size, zoom: 1, pan: .zero, display: room, corners: nil)
             }
             .allowsHitTesting(false)
         }
@@ -91,14 +97,11 @@ struct FloorPlanView: View {
     private var navigationGesture: some Gesture {
         MagnifyGesture()
             .updating($pinch) { value, state, _ in state = value.magnification }
-            .onEnded { value in zoom = (zoom * value.magnification).clamped(0.4, 8) }
+            .onEnded { value in cam.commitPinch(value.magnification) }
             .simultaneously(with:
                 DragGesture()
                     .updating($dragLive) { value, state, _ in state = value.translation }
-                    .onEnded { value in
-                        pan.width += value.translation.width
-                        pan.height += value.translation.height
-                    }
+                    .onEnded { value in cam.commitPan(value.translation) }
             )
     }
 
@@ -108,7 +111,7 @@ struct FloorPlanView: View {
     private func editNavigationGesture(in size: CGSize, editing: EditableRoom) -> some Gesture {
         MagnifyGesture()
             .updating($pinch) { value, state, _ in state = value.magnification }
-            .onEnded { value in zoom = (zoom * value.magnification).clamped(0.4, 8) }
+            .onEnded { value in cam.commitPinch(value.magnification) }
             .simultaneously(with: editDragGesture(in: size, editing: editing))
     }
 
@@ -122,15 +125,16 @@ struct FloorPlanView: View {
                        let cid = editing.corner(near: w, within: worldRadius(26, in: size)) {
                         activeCorner = cid
                         editing.beginCornerDrag()
+                        Haptics.light()
                     } else {
-                        panBase = pan
+                        panBase = cam.pan
                     }
                 }
                 if let cid = activeCorner, let w = worldPoint(value.location, in: size) {
                     editing.dragCorner(cid, to: w)
                 } else if let base = panBase {
-                    pan = CGSize(width: base.width + value.translation.width,
-                                 height: base.height + value.translation.height)
+                    cam.pan = CGSize(width: base.width + value.translation.width,
+                                     height: base.height + value.translation.height)
                 }
             }
             .onEnded { value in
@@ -138,47 +142,22 @@ struct FloorPlanView: View {
                     editing.endCornerDrag(cid)
                     activeCorner = nil
                 } else if let base = panBase {
-                    pan = CGSize(width: base.width + value.translation.width,
-                                 height: base.height + value.translation.height)
+                    cam.pan = CGSize(width: base.width + value.translation.width,
+                                     height: base.height + value.translation.height)
                     panBase = nil
                 }
             }
     }
 
-    private var fitButton: some View {
-        Button {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
-                zoom = 1; pan = .zero; selectedWallID = nil
-            }
-        } label: {
-            Image(systemName: "viewfinder")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Brand.textPrimary)
-                .frame(width: 40, height: 40)
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay(Circle().strokeBorder(Brand.hairline, lineWidth: 0.5))
-        }
-        .padding(16)
-    }
-
     // MARK: - Transform (shared by draw + hit-test)
-
-    private func transform(base: PlanGeometry.Transform, size: CGSize) -> PlanGeometry.Transform {
-        let z = effectiveZoom
-        let c = CGPoint(x: size.width / 2, y: size.height / 2)
-        return PlanGeometry.Transform(
-            origin: base.origin,
-            scale: base.scale * z,
-            offset: CGPoint(x: c.x + (base.offset.x - c.x) * z + effectivePan.width,
-                            y: c.y + (base.offset.y - c.y) * z + effectivePan.height)
-        )
-    }
 
     // The fit frame always uses the immutable `room`, so the plan never re-centres
     // under the finger while live geometry is being edited.
     private func planTransform(in size: CGSize) -> PlanGeometry.Transform? {
         PlanGeometry.fit(room, in: size, padding: 28, maxScale: 240, includeObjects: showFurniture)
-            .map { transform(base: $0, size: size) }
+            .map { $0.composed(in: size, zoom: cam.zoom * pinch,
+                               pan: CGSize(width: cam.pan.width + dragLive.width,
+                                           height: cam.pan.height + dragLive.height)) }
     }
 
     private func worldPoint(_ p: CGPoint, in size: CGSize) -> Point2D? {
@@ -201,6 +180,7 @@ struct FloorPlanView: View {
                         if selectedWallID == id { selectedWallID = nil }
                         editing.deleteWall(id)
                     }
+                    Haptics.light()
                 }
             case .move:
                 selectClosestWall(to: world, among: editing.materializedWalls(),
@@ -220,6 +200,7 @@ struct FloorPlanView: View {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
             if let best, best.dist < within {
                 selectedWallID = (selectedWallID == best.id) ? nil : best.id
+                Haptics.selection()
             } else {
                 selectedWallID = nil
             }
@@ -228,13 +209,13 @@ struct FloorPlanView: View {
 
     // MARK: - Drawing
 
-    private func draw(_ context: GraphicsContext, size: CGSize,
+    private func draw(_ context: GraphicsContext, size: CGSize, zoom: CGFloat, pan: CGSize,
                       display: RoomModel, corners: [EditableRoom.Corner]?) {
         context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(cPaper))
         // Fit to the immutable `room` for a stable frame; render live `display`.
         guard let base = PlanGeometry.fit(room, in: size, padding: 28, maxScale: 240,
                                           includeObjects: showFurniture) else { return }
-        let t = transform(base: base, size: size)
+        let t = base.composed(in: size, zoom: zoom, pan: pan)
 
         FloorPlanRenderer.drawGrid(context, size: size, t: t, dark: dark)
 
@@ -242,7 +223,8 @@ struct FloorPlanView: View {
         FloorPlanRenderer.drawRoom(display, into: context, t: t, ink: ink, showFurniture: showFurniture)
 
         if let id = selectedWallID, let wall = display.walls.first(where: { $0.id == id }) {
-            drawSelection(context, wall: wall, t: t, centroid: PlanGeometry.centroid(display))
+            drawSelection(context, size: size, wall: wall, t: t,
+                          centroid: PlanGeometry.centroid(display))
         }
 
         if let corners { drawHandles(context, corners: corners, t: t) }
@@ -260,7 +242,7 @@ struct FloorPlanView: View {
         }
     }
 
-    private func drawSelection(_ context: GraphicsContext, wall: Wall,
+    private func drawSelection(_ context: GraphicsContext, size: CGSize, wall: Wall,
                                t: PlanGeometry.Transform, centroid: Point2D) {
         let a = t.apply(wall.start), b = t.apply(wall.end)
         var hl = Path(); hl.move(to: a); hl.addLine(to: b)
@@ -274,24 +256,28 @@ struct FloorPlanView: View {
         let nTip = t.apply(d.midpoint + d.outwardNormal)
         var nx = nTip.x - mid.x, ny = nTip.y - mid.y
         let nl = hypot(nx, ny); if nl > 0 { nx /= nl; ny /= nl }
-        let pillCenter = CGPoint(x: mid.x + nx * 28, y: mid.y + ny * 28)
 
         let resolved = context.resolve(
             Text(d.text).font(.system(size: 14, weight: .heavy)).foregroundColor(.white)
         )
         let ts = resolved.measure(in: CGSize(width: 240, height: 60))
         let w = ts.width + 22, h = ts.height + 12
+
+        // Clamp the pill inside the visible, chrome-free region so an outer
+        // wall's measurement never renders off-screen or under the bars.
+        var pillCenter = CGPoint(x: mid.x + nx * 28, y: mid.y + ny * 28)
+        let minX = chromeInsets.leading + w / 2 + 6
+        let maxX = size.width - chromeInsets.trailing - w / 2 - 6
+        let minY = chromeInsets.top + h / 2 + 6
+        let maxY = size.height - chromeInsets.bottom - h / 2 - 6
+        if minX < maxX { pillCenter.x = min(max(pillCenter.x, minX), maxX) }
+        if minY < maxY { pillCenter.y = min(max(pillCenter.y, minY), maxY) }
+
         let rect = CGRect(x: pillCenter.x - w / 2, y: pillCenter.y - h / 2, width: w, height: h)
         context.fill(Capsule().path(in: rect), with: .color(cSel))
         context.draw(resolved, at: pillCenter, anchor: .center)
     }
 
-}
-
-private extension CGFloat {
-    func clamped(_ lo: CGFloat, _ hi: CGFloat) -> CGFloat {
-        self < lo ? lo : (self > hi ? hi : self)
-    }
 }
 
 #Preview("Rectangle") {
