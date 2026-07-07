@@ -194,11 +194,7 @@ struct MapControlStack: View {
             }
         }
         .frame(width: 44)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(Brand.hairline.opacity(0.7), lineWidth: 0.5)
-        )
+        .frostedChip(cornerRadius: 22)
         .shadow(color: Brand.ink.opacity(0.08), radius: 14, x: 0, y: 6)
     }
 
@@ -268,6 +264,91 @@ struct RoomChip: View {
     }
 }
 
+// MARK: - Room chips row
+
+/// Horizontally scrolling strip of room chips under a map. Selection toggles:
+/// tapping the selected room's chip deselects it. Shared by the home map and
+/// the scan review so the strips can never drift apart.
+struct RoomChipsRow: View {
+    struct Entry: Identifiable {
+        let id: UUID
+        let name: String
+        let tint: RoomTint
+    }
+
+    let entries: [Entry]
+    let selectedID: UUID?
+    let onToggle: (UUID?) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(entries) { entry in
+                    RoomChip(name: entry.name, tint: entry.tint,
+                             selected: entry.id == selectedID) {
+                        onToggle(entry.id == selectedID ? nil : entry.id)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+    }
+}
+
+// MARK: - Visualize FAB
+
+/// The clay "Görselleştir" floating action button (AI render entry point),
+/// identical on the home map and the room editor.
+struct VisualizeFAB: View {
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 56, height: 56)
+                .background(Brand.clayGradient, in: Circle())
+                .shadow(color: Brand.clayDeep.opacity(0.6), radius: 16, x: 0, y: 10)
+        }
+        .accessibilityLabel("Görselleştir")
+    }
+}
+
+// MARK: - Shared dialogs
+
+extension View {
+    /// Rename alert with a seeded text field + Kaydet/Vazgeç. Callers seed
+    /// `text` before presenting; blank input is rejected by the store.
+    func renameAlert(_ title: String, placeholder: String, isPresented: Binding<Bool>,
+                     text: Binding<String>, onSave: @escaping () -> Void) -> some View {
+        alert(title, isPresented: isPresented) {
+            TextField(placeholder, text: text)
+            Button("Kaydet", action: onSave)
+            Button("Vazgeç", role: .cancel) {}
+        }
+    }
+
+    /// Destructive confirm for deleting a home — one copy of the data-loss
+    /// warning, shared by the library and the home map.
+    func deleteHomeDialog(_ title: String, isPresented: Binding<Bool>,
+                          onDelete: @escaping () -> Void) -> some View {
+        confirmationDialog(title, isPresented: isPresented, titleVisibility: .visible) {
+            Button("Evi Sil", role: .destructive, action: onDelete)
+            Button("Vazgeç", role: .cancel) {}
+        } message: {
+            Text("Tüm odaları ve versiyonlarıyla birlikte silinir. Bu işlem geri alınamaz.")
+        }
+    }
+}
+
+// MARK: - Motion
+
+extension Animation {
+    /// The app's signature selection/panel spring.
+    static let maketto = Animation.spring(response: 0.35, dampingFraction: 0.85)
+}
+
 // MARK: - Secondary button
 
 /// Quiet secondary pill on cards (rename, secondary actions) — solid card
@@ -288,10 +369,15 @@ struct SoftButtonStyle: ButtonStyle {
 
 // MARK: - Haptics
 
-/// Tiny wrapper so interaction feedback stays consistent app-wide.
+/// Tiny wrapper so interaction feedback stays consistent app-wide. Generators
+/// are shared and long-lived so the Taptic Engine isn't re-allocated per tap.
 @MainActor
 enum Haptics {
-    static func selection() { UISelectionFeedbackGenerator().selectionChanged() }
-    static func light() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
-    static func success() { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+    private static let selectionGenerator = UISelectionFeedbackGenerator()
+    private static let impactGenerator = UIImpactFeedbackGenerator(style: .light)
+    private static let notificationGenerator = UINotificationFeedbackGenerator()
+
+    static func selection() { selectionGenerator.selectionChanged() }
+    static func light() { impactGenerator.impactOccurred() }
+    static func success() { notificationGenerator.notificationOccurred(.success) }
 }

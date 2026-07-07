@@ -12,8 +12,6 @@ struct RoomTint: Equatable {
 /// warm Maketto palette. Tints are assigned by the room's stable position in
 /// the home (sort order), so a room keeps its color across screens.
 enum RoomPalette {
-    static var count: Int { all.count }
-
     static func tint(_ index: Int) -> RoomTint {
         let n = all.count
         return all[((index % n) + n) % n]

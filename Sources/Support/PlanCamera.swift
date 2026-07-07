@@ -17,7 +17,6 @@ final class PlanCamera {
 
     var canZoomIn: Bool { zoom < Self.maxZoom - 0.001 }
     var canZoomOut: Bool { zoom > Self.minZoom + 0.001 }
-    var isIdentity: Bool { zoom == 1 && pan == .zero }
 
     // MARK: - Button controls (zoom about the view centre)
 
@@ -26,10 +25,10 @@ final class PlanCamera {
     func reset() { zoom = 1; pan = .zero }
 
     /// Keeps the world point currently at the view centre fixed while zooming:
-    /// with `offset = c + (fit - c)·z + pan`, that point stays put iff the pan
-    /// scales by the zoom ratio.
+    /// under `Transform.composed(in:zoom:pan:)`, that point stays put iff the
+    /// pan scales by the zoom ratio.
     private func setZoom(_ target: CGFloat) {
-        let z = min(max(target, Self.minZoom), Self.maxZoom)
+        let z = Self.clamped(target)
         guard z != zoom else { return }
         let ratio = z / zoom
         pan = CGSize(width: pan.width * ratio, height: pan.height * ratio)
@@ -39,11 +38,36 @@ final class PlanCamera {
     // MARK: - Gesture commits (anchor-free, matching the live gesture compose)
 
     func commitPinch(_ magnification: CGFloat) {
-        zoom = min(max(zoom * magnification, Self.minZoom), Self.maxZoom)
+        zoom = Self.clamped(zoom * magnification)
     }
 
     func commitPan(_ translation: CGSize) {
         pan.width += translation.width
         pan.height += translation.height
+    }
+
+    private static func clamped(_ zoom: CGFloat) -> CGFloat {
+        min(max(zoom, minZoom), maxZoom)
+    }
+}
+
+// MARK: - Camera composition
+
+extension PlanGeometry.Transform {
+    /// Compose this base fit with a user camera: zoom about the view centre,
+    /// then translate by the pan. The ONE place the composition law lives:
+    ///
+    ///     offset' = c + (offset - c)·zoom + pan
+    ///
+    /// (`PlanCamera.setZoom` relies on exactly this law to keep the view
+    /// centre fixed while button-zooming.)
+    func composed(in size: CGSize, zoom: CGFloat, pan: CGSize) -> PlanGeometry.Transform {
+        let c = CGPoint(x: size.width / 2, y: size.height / 2)
+        return PlanGeometry.Transform(
+            origin: origin,
+            scale: scale * zoom,
+            offset: CGPoint(x: c.x + (offset.x - c.x) * zoom + pan.width,
+                            y: c.y + (offset.y - c.y) * zoom + pan.height)
+        )
     }
 }

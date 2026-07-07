@@ -18,7 +18,6 @@ struct HomeDetailView: View {
     @State private var showDeleteHome = false
 
     private var home: HomeModel? { store.homeModel(for: homeID) }
-    private let spring = Animation.spring(response: 0.35, dampingFraction: 0.85)
 
     var body: some View {
         let home = home
@@ -37,28 +36,18 @@ struct HomeDetailView: View {
         } message: {
             Text("Yapay zekâ ile fotogerçekçi oda görselleri bir sonraki sürümde gelecek.")
         }
-        .alert("Odayı Yeniden Adlandır", isPresented: roomRenamePresented) {
-            TextField("Oda adı", text: $renameText)
-            Button("Kaydet") {
-                if let target = renamingRoom { store.renameRoom(id: target.id, to: renameText) }
-                renamingRoom = nil
-            }
-            Button("Vazgeç", role: .cancel) { renamingRoom = nil }
+        .renameAlert("Odayı Yeniden Adlandır", placeholder: "Oda adı",
+                     isPresented: roomRenamePresented, text: $renameText) {
+            if let target = renamingRoom { store.renameRoom(id: target.id, to: renameText) }
+            renamingRoom = nil
         }
-        .alert("Evi Yeniden Adlandır", isPresented: $renamingHome) {
-            TextField("Ev adı", text: $renameText)
-            Button("Kaydet") { store.renameHome(id: homeID, to: renameText) }
-            Button("Vazgeç", role: .cancel) {}
+        .renameAlert("Evi Yeniden Adlandır", placeholder: "Ev adı",
+                     isPresented: $renamingHome, text: $renameText) {
+            store.renameHome(id: homeID, to: renameText)
         }
-        .confirmationDialog("Bu ev silinsin mi?", isPresented: $showDeleteHome,
-                            titleVisibility: .visible) {
-            Button("Evi Sil", role: .destructive) {
-                store.deleteHome(id: homeID)
-                router.pop()
-            }
-            Button("Vazgeç", role: .cancel) {}
-        } message: {
-            Text("Tüm odaları ve versiyonlarıyla birlikte silinir. Bu işlem geri alınamaz.")
+        .deleteHomeDialog("Bu ev silinsin mi?", isPresented: $showDeleteHome) {
+            store.deleteHome(id: homeID)
+            router.pop()
         }
     }
 
@@ -75,7 +64,7 @@ struct HomeDetailView: View {
                 selectedRoomID: selectedRoomID,
                 camera: camera
             ) { id in
-                withAnimation(spring) { selectedRoomID = id }
+                withAnimation(.maketto) { selectedRoomID = id }
                 if id != nil { Haptics.selection() }
             }
             .ignoresSafeArea()
@@ -141,7 +130,7 @@ struct HomeDetailView: View {
         VStack(spacing: 12) {
             HStack {
                 Spacer()
-                fab
+                VisualizeFAB { showVisualizeSoon = true }
             }
             .padding(.horizontal, 18)
 
@@ -149,9 +138,18 @@ struct HomeDetailView: View {
                let idx = ordered.firstIndex(where: { $0.id == sel }) {
                 roomCard(ordered[idx], index: idx)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .id(sel)
             }
 
-            chipsRow(ordered)
+            RoomChipsRow(
+                entries: ordered.enumerated().map { i, placed in
+                    RoomChipsRow.Entry(id: placed.id, name: placed.name,
+                                       tint: RoomPalette.tint(i))
+                },
+                selectedID: selectedRoomID
+            ) { id in
+                withAnimation(.maketto) { selectedRoomID = id }
+            }
         }
         .padding(.bottom, 12)
     }
@@ -176,7 +174,7 @@ struct HomeDetailView: View {
                 }
                 Spacer()
                 CircleIconButton("xmark", size: 30, accessibilityLabel: "Seçimi kapat") {
-                    withAnimation(spring) { selectedRoomID = nil }
+                    withAnimation(.maketto) { selectedRoomID = nil }
                 }
             }
 
@@ -221,36 +219,4 @@ struct HomeDetailView: View {
         .foregroundStyle(Brand.textSecondary)
     }
 
-    // MARK: - Room chips (quick selection, mirrors map tints)
-
-    private func chipsRow(_ rooms: [PlacedRoom]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Array(rooms.enumerated()), id: \.element.id) { i, placed in
-                    RoomChip(
-                        name: placed.name,
-                        tint: RoomPalette.tint(i),
-                        selected: placed.id == selectedRoomID
-                    ) {
-                        withAnimation(spring) {
-                            selectedRoomID = (placed.id == selectedRoomID) ? nil : placed.id
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 16)
-        }
-    }
-
-    private var fab: some View {
-        Button { showVisualizeSoon = true } label: {
-            Image(systemName: "sparkles")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 56, height: 56)
-                .background(Brand.clayGradient, in: Circle())
-                .shadow(color: Brand.clayDeep.opacity(0.6), radius: 16, x: 0, y: 10)
-        }
-        .accessibilityLabel("Görselleştir")
-    }
 }

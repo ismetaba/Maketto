@@ -31,7 +31,7 @@ struct HomeRow: View {
                     .font(.system(size: 26))
                     .foregroundStyle(Brand.textFaint)
             } else {
-                WholeHomePlanView(rooms: home.rooms, interactive: false, showsLabels: false)
+                WholeHomePlanView(rooms: home.rooms, interactive: false)
                     .padding(14)
             }
         }

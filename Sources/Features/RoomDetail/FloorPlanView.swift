@@ -147,24 +147,13 @@ struct FloorPlanView: View {
 
     // MARK: - Transform (shared by draw + hit-test)
 
-    private func transform(base: PlanGeometry.Transform, size: CGSize,
-                           zoom: CGFloat, pan: CGSize) -> PlanGeometry.Transform {
-        let c = CGPoint(x: size.width / 2, y: size.height / 2)
-        return PlanGeometry.Transform(
-            origin: base.origin,
-            scale: base.scale * zoom,
-            offset: CGPoint(x: c.x + (base.offset.x - c.x) * zoom + pan.width,
-                            y: c.y + (base.offset.y - c.y) * zoom + pan.height)
-        )
-    }
-
     // The fit frame always uses the immutable `room`, so the plan never re-centres
     // under the finger while live geometry is being edited.
     private func planTransform(in size: CGSize) -> PlanGeometry.Transform? {
         PlanGeometry.fit(room, in: size, padding: 28, maxScale: 240, includeObjects: showFurniture)
-            .map { transform(base: $0, size: size, zoom: cam.zoom * pinch,
-                             pan: CGSize(width: cam.pan.width + dragLive.width,
-                                         height: cam.pan.height + dragLive.height)) }
+            .map { $0.composed(in: size, zoom: cam.zoom * pinch,
+                               pan: CGSize(width: cam.pan.width + dragLive.width,
+                                           height: cam.pan.height + dragLive.height)) }
     }
 
     private func worldPoint(_ p: CGPoint, in size: CGSize) -> Point2D? {
@@ -222,7 +211,7 @@ struct FloorPlanView: View {
         // Fit to the immutable `room` for a stable frame; render live `display`.
         guard let base = PlanGeometry.fit(room, in: size, padding: 28, maxScale: 240,
                                           includeObjects: showFurniture) else { return }
-        let t = transform(base: base, size: size, zoom: zoom, pan: pan)
+        let t = base.composed(in: size, zoom: zoom, pan: pan)
 
         FloorPlanRenderer.drawGrid(context, size: size, t: t, dark: dark)
 

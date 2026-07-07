@@ -21,15 +21,13 @@ struct RoomDetailView: View {
 
     private var room: RoomModel? { store.roomModel(for: roomID) }
     private var isEditing: Bool { editable != nil }
-    private let spring = Animation.spring(response: 0.35, dampingFraction: 0.85)
 
     var body: some View {
         let room = room
-        let modelURL = store.modelURL(for: roomID)
         ZStack {
             Brand.surface.ignoresSafeArea()
             if let room {
-                editor(room: room, modelURL: modelURL)
+                editor(room: room)
             } else {
                 ContentUnavailableView("Oda bulunamadı", systemImage: "exclamationmark.triangle")
             }
@@ -46,10 +44,9 @@ struct RoomDetailView: View {
         } message: {
             Text("Düzenlemen kaydedilemedi. Lütfen tekrar dene.")
         }
-        .alert("Odayı Yeniden Adlandır", isPresented: $showRename) {
-            TextField("Oda adı", text: $renameText)
-            Button("Kaydet") { store.renameRoom(id: roomID, to: renameText) }
-            Button("Vazgeç", role: .cancel) {}
+        .renameAlert("Odayı Yeniden Adlandır", placeholder: "Oda adı",
+                     isPresented: $showRename, text: $renameText) {
+            store.renameRoom(id: roomID, to: renameText)
         }
         .confirmationDialog("Değişiklikleri at?", isPresented: $showDiscard, titleVisibility: .visible) {
             Button("At", role: .destructive) { editable = nil }
@@ -62,9 +59,9 @@ struct RoomDetailView: View {
     // MARK: - Layout
 
     @ViewBuilder
-    private func editor(room: RoomModel, modelURL: URL?) -> some View {
+    private func editor(room: RoomModel) -> some View {
         ZStack {
-            canvas(room: room, modelURL: modelURL)
+            canvas(room: room)
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
@@ -80,7 +77,7 @@ struct RoomDetailView: View {
                     VStack(spacing: 12) {
                         HStack {
                             Spacer()
-                            fab
+                            VisualizeFAB { showVisualizeSoon = true }
                         }
                         .padding(.horizontal, 18)
                         viewDock(room: room)
@@ -98,7 +95,7 @@ struct RoomDetailView: View {
     }
 
     @ViewBuilder
-    private func canvas(room: RoomModel, modelURL: URL?) -> some View {
+    private func canvas(room: RoomModel) -> some View {
         if let editable {
             FloorPlanView(room: room, camera: camera, editing: editable, editTool: editTool)
         } else {
@@ -106,7 +103,8 @@ struct RoomDetailView: View {
             case .twoD:
                 FloorPlanView(room: room, camera: camera)
             case .threeD:
-                if let modelURL {
+                // The URL lookup stats the disk, so resolve it only when 3D shows.
+                if let modelURL = store.modelURL(for: roomID) {
                     USDZSceneView(url: modelURL)
                 } else {
                     ZStack {
@@ -231,9 +229,14 @@ struct RoomDetailView: View {
     }
 
     /// Edit mode: a one-line hint so the active tool is never a mystery.
+    /// (Exhaustive switch — a future tool cannot ship without hint copy.)
     private var editHint: some View {
-        Text(editTool == .move ? "Köşeleri sürükleyerek planı düzeltin"
-                               : "Silmek için bir duvara dokunun")
+        let text: String
+        switch editTool {
+        case .move: text = "Köşeleri sürükleyerek planı düzeltin"
+        case .delete: text = "Silmek için bir duvara dokunun"
+        }
+        return Text(text)
             .font(.system(size: 12.5, weight: .semibold))
             .foregroundStyle(Brand.textSecondary)
             .padding(.horizontal, 14).padding(.vertical, 8)
@@ -284,18 +287,6 @@ struct RoomDetailView: View {
         .accessibilityLabel(label)
     }
 
-    private var fab: some View {
-        Button { showVisualizeSoon = true } label: {
-            Image(systemName: "sparkles")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 56, height: 56)
-                .background(Brand.clayGradient, in: Circle())
-                .shadow(color: Brand.clayDeep.opacity(0.6), radius: 16, x: 0, y: 10)
-        }
-        .accessibilityLabel("Görselleştir")
-    }
-
     // MARK: - Edit lifecycle
 
     private func enterEdit() {
@@ -303,7 +294,7 @@ struct RoomDetailView: View {
         planMode = .twoD
         editTool = .move
         Haptics.light()
-        withAnimation(spring) {
+        withAnimation(.maketto) {
             editable = EditableRoom(room)
         }
     }
@@ -313,7 +304,7 @@ struct RoomDetailView: View {
         guard editable.isDirty else { self.editable = nil; return }
         if store.saveEditedRoom(id: roomID, editedDisplayRoom: editable.flattened()) {
             Haptics.success()
-            withAnimation(spring) { self.editable = nil }
+            withAnimation(.maketto) { self.editable = nil }
         } else {
             saveFailed = true
         }
@@ -323,7 +314,7 @@ struct RoomDetailView: View {
         if editable?.isDirty ?? false {
             showDiscard = true
         } else {
-            withAnimation(spring) { editable = nil }
+            withAnimation(.maketto) { editable = nil }
         }
     }
 }

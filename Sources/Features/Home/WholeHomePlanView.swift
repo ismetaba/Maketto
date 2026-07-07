@@ -11,12 +11,12 @@ import UIKit
 /// Reuses FloorPlanRenderer.
 struct WholeHomePlanView: View {
     let rooms: [RoomModel]
+    /// Interactive maps get gestures, the metric grid and room labels; a
+    /// non-interactive plan is a calm static thumbnail.
     var interactive: Bool = true
     var selectedRoomID: UUID?
     /// External camera; when nil (thumbnails, previews) an internal one is used.
     var camera: PlanCamera?
-    /// Room name + area labels on the map (off for tiny library thumbnails).
-    var showsLabels: Bool = true
     /// Called with the tapped room, or nil when empty paper was tapped.
     var onSelect: ((UUID?) -> Void)?
 
@@ -77,21 +77,10 @@ struct WholeHomePlanView: View {
             )
     }
 
-    private func transform(base: PlanGeometry.Transform, size: CGSize,
-                           zoom: CGFloat, pan: CGSize) -> PlanGeometry.Transform {
-        let c = CGPoint(x: size.width / 2, y: size.height / 2)
-        return PlanGeometry.Transform(
-            origin: base.origin,
-            scale: base.scale * zoom,
-            offset: CGPoint(x: c.x + (base.offset.x - c.x) * zoom + pan.width,
-                            y: c.y + (base.offset.y - c.y) * zoom + pan.height)
-        )
-    }
-
     private func selectRoom(at point: CGPoint, in size: CGSize) {
         guard let onSelect else { return }
         guard let base = PlanGeometry.fit(rooms, in: size, padding: 28, maxScale: 120) else { return }
-        let t = transform(base: base, size: size, zoom: cam.zoom, pan: cam.pan)
+        let t = base.composed(in: size, zoom: cam.zoom, pan: cam.pan)
         let world = t.unapply(point)
 
         // Among rooms whose polygon contains the tap, pick the smallest (innermost).
@@ -104,26 +93,25 @@ struct WholeHomePlanView: View {
         }
         if let hit { onSelect(hit.id); return }
 
-        // Rooms whose walls never closed into a polygon stay reachable near their
-        // centre — but only nearby, so a tap on empty paper still deselects.
-        var nearest: (id: UUID, dist: Double)?
+        // Rooms whose walls never closed into a polygon stay reachable across
+        // their whole footprint (bbox + a little slop); a tap on empty paper
+        // deselects.
+        var boxHit: (id: UUID, area: Double)?
         for room in rooms {
             guard PlanGeometry.floorPolygon(room) == nil,
-                  let c = PlanGeometry.roomCenter(room) else { continue }
-            let d = c.distance(to: world)
-            if nearest == nil || d < nearest!.dist { nearest = (room.id, d) }
+                  let b = PlanGeometry.worldBounds(room) else { continue }
+            guard b.insetBy(dx: -0.4, dy: -0.4).contains(CGPoint(x: world.x, y: world.z))
+            else { continue }
+            let a = Double(b.width * b.height)
+            if boxHit == nil || a < boxHit!.area { boxHit = (room.id, a) }
         }
-        if let nearest, nearest.dist < 1.5 {
-            onSelect(nearest.id)
-        } else {
-            onSelect(nil)
-        }
+        onSelect(boxHit?.id)
     }
 
     private func draw(_ context: GraphicsContext, size: CGSize, zoom: CGFloat, pan: CGSize) {
         context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(cPaper))
         guard let base = PlanGeometry.fit(rooms, in: size, padding: 28, maxScale: 120) else { return }
-        let t = transform(base: base, size: size, zoom: zoom, pan: pan)
+        let t = base.composed(in: size, zoom: zoom, pan: pan)
 
         if interactive {
             FloorPlanRenderer.drawGrid(context, size: size, t: t, dark: dark)
@@ -157,8 +145,9 @@ struct WholeHomePlanView: View {
                            style: StrokeStyle(lineWidth: 3.5, lineJoin: .round))
         }
 
-        // Labels last, so neighbouring fills never cover text.
-        if showsLabels {
+        // Labels last, so neighbouring fills never cover text (skipped on
+        // static thumbnails, where they'd be unreadably small anyway).
+        if interactive {
             for (i, room) in rooms.enumerated() {
                 drawLabel(context, room: room, tint: RoomPalette.tint(i), t: t)
             }

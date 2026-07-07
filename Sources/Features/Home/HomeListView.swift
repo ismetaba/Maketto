@@ -29,26 +29,15 @@ struct HomeListView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
-        .alert("Evi Yeniden Adlandır", isPresented: renamePresented) {
-            TextField("Ev adı", text: $renameText)
-            Button("Kaydet") {
-                if let target = renameTarget { store.renameHome(id: target.id, to: renameText) }
-                renameTarget = nil
-            }
-            Button("Vazgeç", role: .cancel) { renameTarget = nil }
+        .renameAlert("Evi Yeniden Adlandır", placeholder: "Ev adı",
+                     isPresented: renamePresented, text: $renameText) {
+            if let target = renameTarget { store.renameHome(id: target.id, to: renameText) }
+            renameTarget = nil
         }
-        .confirmationDialog(
-            "\u{201C}\(deleteTarget?.name ?? "")\u{201D} silinsin mi?",
-            isPresented: deletePresented,
-            titleVisibility: .visible
-        ) {
-            Button("Evi Sil", role: .destructive) {
-                if let target = deleteTarget { store.deleteHome(id: target.id) }
-                deleteTarget = nil
-            }
-            Button("Vazgeç", role: .cancel) { deleteTarget = nil }
-        } message: {
-            Text("Tüm odaları ve versiyonlarıyla birlikte silinir. Bu işlem geri alınamaz.")
+        .deleteHomeDialog("\u{201C}\(deleteTarget?.name ?? "")\u{201D} silinsin mi?",
+                          isPresented: deletePresented) {
+            if let target = deleteTarget { store.deleteHome(id: target.id) }
+            deleteTarget = nil
         }
     }
 

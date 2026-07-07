@@ -9,16 +9,18 @@ struct ScanReviewView: View {
     let onRescan: () -> Void
 
     @State private var rooms: [RoomModel]
+    /// The auto-assigned name per room — a name still matching it was never
+    /// touched by the user, so a kind change may refresh it.
+    @State private var autoNames: [UUID: String]
     @State private var homeName = "Evim"
     @State private var selectedRoomID: UUID?
     @State private var saveFailed = false
     @State private var camera = PlanCamera()
 
-    private let spring = Animation.spring(response: 0.32, dampingFraction: 0.85)
-
     init(rooms: [RoomModel], modelURLs: [UUID: URL],
          onSave: @escaping ([RoomModel], String) -> Bool, onRescan: @escaping () -> Void) {
         _rooms = State(initialValue: rooms)
+        _autoNames = State(initialValue: Dictionary(uniqueKeysWithValues: rooms.map { ($0.id, $0.name) }))
         self.modelURLs = modelURLs
         self.onSave = onSave
         self.onRescan = onRescan
@@ -34,7 +36,7 @@ struct ScanReviewView: View {
             Brand.surface.ignoresSafeArea()
 
             WholeHomePlanView(rooms: rooms, selectedRoomID: selectedRoomID, camera: camera) { id in
-                withAnimation(spring) { selectedRoomID = id }
+                withAnimation(.maketto) { selectedRoomID = id }
                 if id != nil { Haptics.selection() }
             }
             .ignoresSafeArea()
@@ -75,21 +77,13 @@ struct ScanReviewView: View {
     }
 
     private var chipsRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Array(rooms.enumerated()), id: \.element.id) { i, room in
-                    RoomChip(
-                        name: room.name,
-                        tint: RoomPalette.tint(i),
-                        selected: room.id == selectedRoomID
-                    ) {
-                        withAnimation(spring) {
-                            selectedRoomID = (room.id == selectedRoomID) ? nil : room.id
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 16)
+        RoomChipsRow(
+            entries: rooms.enumerated().map { i, room in
+                RoomChipsRow.Entry(id: room.id, name: room.name, tint: RoomPalette.tint(i))
+            },
+            selectedID: selectedRoomID
+        ) { id in
+            withAnimation(.maketto) { selectedRoomID = id }
         }
     }
 
@@ -171,11 +165,14 @@ struct ScanReviewView: View {
     }
 
     private func setKind(_ kind: RoomKind, at idx: Int) {
-        let oldBase = RoomNaming.defaultName(for: rooms[idx].kind ?? .unidentified)
-        let name = rooms[idx].name
+        let room = rooms[idx]
         rooms[idx].kind = kind
-        if name == oldBase || name.hasPrefix(oldBase + " ") {
-            rooms[idx].name = RoomNaming.defaultName(for: kind)
+        // Refresh the default name only while it is still the auto-assigned
+        // one — a name the user typed is never overwritten.
+        if room.name == autoNames[room.id] {
+            let fresh = RoomNaming.defaultName(for: kind)
+            rooms[idx].name = fresh
+            autoNames[room.id] = fresh
         }
         Haptics.selection()
     }
