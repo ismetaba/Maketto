@@ -49,7 +49,7 @@ struct RoomDetailView: View {
             store.renameRoom(id: roomID, to: renameText)
         }
         .confirmationDialog("Değişiklikleri at?", isPresented: $showDiscard, titleVisibility: .visible) {
-            Button("At", role: .destructive) { editable = nil }
+            Button("At", role: .destructive) { closeEditor() }
             Button("Düzenlemeye dön", role: .cancel) {}
         } message: {
             Text("Kaydedilmemiş değişikliklerin kaybolacak.")
@@ -293,6 +293,7 @@ struct RoomDetailView: View {
         guard let room = store.roomModel(for: roomID) else { return }
         planMode = .twoD
         editTool = .move
+        camera.reset()   // always start editing from the fitted plan, handles on-screen
         Haptics.light()
         withAnimation(.maketto) {
             editable = EditableRoom(room)
@@ -301,10 +302,10 @@ struct RoomDetailView: View {
 
     private func save() {
         guard let editable else { return }
-        guard editable.isDirty else { self.editable = nil; return }
+        guard editable.isDirty else { closeEditor(); return }
         if store.saveEditedRoom(id: roomID, editedDisplayRoom: editable.flattened()) {
             Haptics.success()
-            withAnimation(.maketto) { self.editable = nil }
+            closeEditor()
         } else {
             saveFailed = true
         }
@@ -314,7 +315,13 @@ struct RoomDetailView: View {
         if editable?.isDirty ?? false {
             showDiscard = true
         } else {
-            withAnimation(.maketto) { editable = nil }
+            closeEditor()
         }
+    }
+
+    /// Leave edit mode and return to the fitted overview.
+    private func closeEditor() {
+        withAnimation(.maketto) { editable = nil }
+        camera.reset()
     }
 }
