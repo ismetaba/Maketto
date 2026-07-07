@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Logo
 
@@ -105,4 +106,192 @@ extension View {
                     .strokeBorder(Brand.hairline.opacity(0.7), lineWidth: 0.5)
             )
     }
+
+    /// Floating glass sheet for bottom docks and room cards — frosted chip plus
+    /// a soft lift shadow so panels read as chrome above the map.
+    func glassPanel(cornerRadius: CGFloat = 26) -> some View {
+        frostedChip(cornerRadius: cornerRadius)
+            .shadow(color: Brand.ink.opacity(0.10), radius: 22, x: 0, y: 10)
+    }
+}
+
+// MARK: - Circular chrome buttons
+
+/// The visual for a floating circular icon button (glass over the map, or dark
+/// over the camera). Usable directly as a `Menu` label.
+struct CircleIcon: View {
+    let systemName: String
+    var size: CGFloat = 40
+    var dark: Bool = false
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: size * 0.42, weight: .semibold))
+            .foregroundStyle(dark ? Color.white : Brand.textPrimary)
+            .frame(width: size, height: size)
+            .background {
+                if dark {
+                    Circle().fill(Color.black.opacity(0.45))
+                } else {
+                    Circle().fill(.ultraThinMaterial)
+                }
+            }
+            .overlay(
+                Circle().strokeBorder(
+                    dark ? Color.white.opacity(0.14) : Brand.hairline.opacity(0.7),
+                    lineWidth: 0.5
+                )
+            )
+            .contentShape(Circle())
+    }
+}
+
+/// Floating circular icon button used across all map chrome.
+struct CircleIconButton: View {
+    let systemName: String
+    var size: CGFloat = 40
+    var dark: Bool = false
+    var accessibilityLabel: String
+    var action: () -> Void
+
+    init(_ systemName: String, size: CGFloat = 40, dark: Bool = false,
+         accessibilityLabel: String, action: @escaping () -> Void) {
+        self.systemName = systemName
+        self.size = size
+        self.dark = dark
+        self.accessibilityLabel = accessibilityLabel
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            CircleIcon(systemName: systemName, size: size, dark: dark)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+// MARK: - Map controls
+
+/// Robot-vacuum-style floating map controls: zoom in, zoom out, re-fit.
+/// Docked at the trailing edge of every plan screen.
+struct MapControlStack: View {
+    let camera: PlanCamera
+
+    var body: some View {
+        VStack(spacing: 0) {
+            control("plus", enabled: camera.canZoomIn, label: "Yakınlaştır") {
+                camera.zoomIn()
+            }
+            divider
+            control("minus", enabled: camera.canZoomOut, label: "Uzaklaştır") {
+                camera.zoomOut()
+            }
+            divider
+            control("viewfinder", enabled: true, label: "Haritaya sığdır") {
+                camera.reset()
+            }
+        }
+        .frame(width: 44)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(Brand.hairline.opacity(0.7), lineWidth: 0.5)
+        )
+        .shadow(color: Brand.ink.opacity(0.08), radius: 14, x: 0, y: 6)
+    }
+
+    private var divider: some View {
+        Rectangle().fill(Brand.hairline.opacity(0.8)).frame(width: 20, height: 0.5)
+    }
+
+    private func control(_ icon: String, enabled: Bool, label: String,
+                         action: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.light()
+            action()
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(enabled ? Brand.textPrimary : Brand.textFaint.opacity(0.5))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .accessibilityLabel(label)
+    }
+}
+
+// MARK: - Room chip
+
+/// One room in the horizontally scrolling room strip under the map: color dot,
+/// name, and a compact selected state. Mirrors the room's map tint.
+struct RoomChip: View {
+    let name: String
+    let tint: RoomTint
+    var selected: Bool = false
+    var action: () -> Void
+
+    var body: some View {
+        Button {
+            Haptics.selection()
+            action()
+        } label: {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(tint.accent)
+                    .frame(width: 8, height: 8)
+                Text(name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Brand.textPrimary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 13)
+            .padding(.vertical, 9)
+            .background {
+                if selected {
+                    Capsule().fill(tint.fill)
+                } else {
+                    Capsule().fill(.ultraThinMaterial)
+                }
+            }
+            .overlay(
+                Capsule().strokeBorder(
+                    selected ? tint.accent.opacity(0.55) : Brand.hairline.opacity(0.7),
+                    lineWidth: selected ? 1.5 : 0.5
+                )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Secondary button
+
+/// Quiet secondary pill on cards (rename, secondary actions) — solid card
+/// surface with a hairline, sized to pair with the primary pills.
+struct SoftButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(Brand.textPrimary)
+            .padding(.vertical, 13)
+            .padding(.horizontal, 18)
+            .background(Brand.card, in: Capsule())
+            .overlay(Capsule().strokeBorder(Brand.hairline, lineWidth: 1))
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Haptics
+
+/// Tiny wrapper so interaction feedback stays consistent app-wide.
+@MainActor
+enum Haptics {
+    static func selection() { UISelectionFeedbackGenerator().selectionChanged() }
+    static func light() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+    static func success() { UINotificationFeedbackGenerator().notificationOccurred(.success) }
 }

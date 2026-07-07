@@ -1,60 +1,73 @@
 import SwiftUI
 
-/// A home library card: whole-home plan thumbnail + name + room/area meta.
+/// A home library card: hero map thumbnail on top, name + meta + chevron below.
 struct HomeRow: View {
     let home: HomeSummary
 
     var body: some View {
-        HStack(spacing: 0) {
+        VStack(spacing: 0) {
             thumbnail
-                .frame(width: 132)
-                .frame(maxHeight: .infinity)
+                .frame(height: 164)
+                .frame(maxWidth: .infinity)
                 .clipped()
 
-            VStack(alignment: .leading, spacing: 5) {
-                Text(home.name)
-                    .font(.display(23))
-                    .foregroundStyle(Brand.textPrimary)
-                    .lineLimit(1)
-                Text(meta)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Brand.textSecondary)
-            }
-            .padding(.horizontal, 16)
-
-            Spacer(minLength: 0)
+            footer
         }
-        .frame(height: 116)
         .background(Brand.card)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .strokeBorder(Brand.hairline, lineWidth: 1)
         )
-        .shadow(color: Brand.ink.opacity(0.06), radius: 14, x: 0, y: 6)
-    }
-
-    private var meta: String {
-        let rooms = "\(home.roomCount) oda"
-        if home.totalArea > 0 {
-            return "\(rooms) · \(MeasurementFormat.squareMeters(home.totalArea))"
-        }
-        return rooms
+        .shadow(color: Brand.ink.opacity(0.07), radius: 18, x: 0, y: 8)
     }
 
     @ViewBuilder
     private var thumbnail: some View {
         ZStack {
-            Brand.surfaceAlt
+            Brand.surface   // matches the map paper, so the plan floats seamlessly
             if home.rooms.isEmpty {
                 Image(systemName: "house")
-                    .font(.system(size: 22))
+                    .font(.system(size: 26))
                     .foregroundStyle(Brand.textFaint)
             } else {
-                WholeHomePlanView(rooms: home.rooms, interactive: false)
-                    .padding(10)
+                WholeHomePlanView(rooms: home.rooms, interactive: false, showsLabels: false)
+                    .padding(14)
             }
         }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(home.name)
+                    .font(.display(23))
+                    .foregroundStyle(Brand.textPrimary)
+                    .lineLimit(1)
+                HStack(spacing: 12) {
+                    metaItem("square.split.bottomrightquarter", "\(home.roomCount) oda")
+                    if home.totalArea > 0 {
+                        metaItem("ruler", MeasurementFormat.squareMeters(home.totalArea))
+                    }
+                    metaItem("calendar", home.createdAt.formatted(date: .abbreviated, time: .omitted))
+                }
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Brand.textFaint)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .overlay(alignment: .top) { Brand.hairline.frame(height: 0.5) }
+    }
+
+    private func metaItem(_ icon: String, _ text: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+            Text(text).font(.system(size: 12.5, weight: .medium))
+        }
+        .foregroundStyle(Brand.textSecondary)
     }
 }
 

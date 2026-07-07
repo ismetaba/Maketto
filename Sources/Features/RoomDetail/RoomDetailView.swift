@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// The full-screen editor: the maket fills the screen, chrome floats over it.
-/// No measurement tables — tap a wall and its measure appears on the model.
+/// The full-screen room editor: the maket fills the screen, chrome floats over
+/// it. No measurement tables — tap a wall and its measure appears on the model.
+/// Zoom/fit dock at the trailing edge; 2D/3D and stats live in the bottom dock.
 struct RoomDetailView: View {
     @Environment(RoomStore.self) private var store
     @Environment(Router.self) private var router
@@ -9,14 +10,18 @@ struct RoomDetailView: View {
 
     enum PlanMode: String, CaseIterable { case twoD = "2D", threeD = "3D" }
     @State private var planMode: PlanMode = .twoD
+    @State private var camera = PlanCamera()
     @State private var showVisualizeSoon = false
     @State private var editable: EditableRoom?        // non-nil = edit mode
     @State private var editTool: PlanTool = .move
     @State private var showDiscard = false
     @State private var saveFailed = false
+    @State private var showRename = false
+    @State private var renameText = ""
 
     private var room: RoomModel? { store.roomModel(for: roomID) }
     private var isEditing: Bool { editable != nil }
+    private let spring = Animation.spring(response: 0.35, dampingFraction: 0.85)
 
     var body: some View {
         let room = room
@@ -41,6 +46,11 @@ struct RoomDetailView: View {
         } message: {
             Text("Düzenlemen kaydedilemedi. Lütfen tekrar dene.")
         }
+        .alert("Odayı Yeniden Adlandır", isPresented: $showRename) {
+            TextField("Oda adı", text: $renameText)
+            Button("Kaydet") { store.renameRoom(id: roomID, to: renameText) }
+            Button("Vazgeç", role: .cancel) {}
+        }
         .confirmationDialog("Değişiklikleri at?", isPresented: $showDiscard, titleVisibility: .visible) {
             Button("At", role: .destructive) { editable = nil }
             Button("Düzenlemeye dön", role: .cancel) {}
@@ -48,6 +58,8 @@ struct RoomDetailView: View {
             Text("Kaydedilmemiş değişikliklerin kaybolacak.")
         }
     }
+
+    // MARK: - Layout
 
     @ViewBuilder
     private func editor(room: RoomModel, modelURL: URL?) -> some View {
@@ -58,20 +70,29 @@ struct RoomDetailView: View {
             VStack(spacing: 0) {
                 topBar(room: room)
                 Spacer()
-                Group {
-                    if isEditing { editDock } else { segment }
-                }
-                .padding(.bottom, 36)
-            }
-
-            if !isEditing {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        fab.padding(.trailing, 18).padding(.bottom, 110)
+                if isEditing {
+                    VStack(spacing: 10) {
+                        editHint
+                        editDock
                     }
+                    .padding(.bottom, 14)
+                } else {
+                    VStack(spacing: 12) {
+                        HStack {
+                            Spacer()
+                            fab
+                        }
+                        .padding(.horizontal, 18)
+                        viewDock(room: room)
+                    }
+                    .padding(.bottom, 14)
                 }
+            }
+        }
+        .overlay(alignment: .trailing) {
+            if isEditing || planMode == .twoD {
+                MapControlStack(camera: camera)
+                    .padding(.trailing, 12)
             }
         }
     }
@@ -79,11 +100,11 @@ struct RoomDetailView: View {
     @ViewBuilder
     private func canvas(room: RoomModel, modelURL: URL?) -> some View {
         if let editable {
-            FloorPlanView(room: room, editing: editable, editTool: editTool)
+            FloorPlanView(room: room, camera: camera, editing: editable, editTool: editTool)
         } else {
             switch planMode {
             case .twoD:
-                FloorPlanView(room: room)
+                FloorPlanView(room: room, camera: camera)
             case .threeD:
                 if let modelURL {
                     USDZSceneView(url: modelURL)
@@ -97,16 +118,19 @@ struct RoomDetailView: View {
         }
     }
 
+    // MARK: - Top bar
+
     private func topBar(room: RoomModel) -> some View {
-        HStack {
+        HStack(spacing: 8) {
             if isEditing {
-                circleButton("xmark") { attemptCancel() }
+                CircleIconButton("xmark", accessibilityLabel: "Düzenlemeden çık") { attemptCancel() }
             } else {
-                circleButton("chevron.left") { router.pop() }
+                CircleIconButton("chevron.left", accessibilityLabel: "Geri") { router.pop() }
             }
             Spacer()
             VStack(spacing: 1) {
-                Overline(isEditing ? "Düzenleniyor" : "Maketto", color: Brand.textSecondary, size: 9)
+                Overline(isEditing ? "Düzenleniyor" : (room.kind ?? .unidentified).displayName,
+                         color: isEditing ? Brand.clay : Brand.textSecondary, size: 9)
                 HStack(spacing: 7) {
                     Text(room.name)
                         .font(.display(19))
@@ -125,7 +149,24 @@ struct RoomDetailView: View {
             if isEditing {
                 saveButton
             } else {
-                circleButton("slider.horizontal.3") { enterEdit() }
+                HStack(spacing: 6) {
+                    Menu {
+                        Button {
+                            renameText = room.name
+                            showRename = true
+                        } label: {
+                            Label("Yeniden Adlandır", systemImage: "pencil")
+                        }
+                        Button { camera.reset() } label: {
+                            Label("Plana Sığdır", systemImage: "viewfinder")
+                        }
+                    } label: {
+                        CircleIcon(systemName: "ellipsis")
+                    }
+                    .accessibilityLabel("Oda seçenekleri")
+
+                    CircleIconButton("pencil.and.ruler", accessibilityLabel: "Planı düzenle") { enterEdit() }
+                }
             }
         }
         .padding(.horizontal, 8)
@@ -148,22 +189,76 @@ struct RoomDetailView: View {
         .disabled(!dirty)
     }
 
+    // MARK: - Bottom docks
+
+    /// View mode: 2D/3D switch + live room stats in one glass dock.
+    private func viewDock(room: RoomModel) -> some View {
+        HStack(spacing: 12) {
+            segment
+            Rectangle().fill(Brand.hairline).frame(width: 1, height: 26)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(MeasurementFormat.squareMeters(PlanGeometry.area(of: room)))
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Brand.textPrimary)
+                Text("\(room.walls.count) duvar · \(room.openings.count) açıklık")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Brand.textSecondary)
+            }
+            .padding(.trailing, 6)
+        }
+        .padding(6)
+        .glassPanel(cornerRadius: 22)
+    }
+
+    private var segment: some View {
+        HStack(spacing: 4) {
+            ForEach(PlanMode.allCases, id: \.self) { mode in
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) { planMode = mode }
+                    Haptics.selection()
+                } label: {
+                    Text(mode.rawValue)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(planMode == mode ? .white : Brand.textSecondary)
+                        .padding(.vertical, 8).padding(.horizontal, 16)
+                        .background {
+                            if planMode == mode { Capsule().fill(Brand.clay) }
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    /// Edit mode: a one-line hint so the active tool is never a mystery.
+    private var editHint: some View {
+        Text(editTool == .move ? "Köşeleri sürükleyerek planı düzeltin"
+                               : "Silmek için bir duvara dokunun")
+            .font(.system(size: 12.5, weight: .semibold))
+            .foregroundStyle(Brand.textSecondary)
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .frostedChip()
+    }
+
     private var editDock: some View {
         HStack(spacing: 4) {
             toolButton(.move, icon: "hand.draw", label: "Taşı")
             toolButton(.delete, icon: "trash", label: "Sil")
             Rectangle().fill(Brand.hairline).frame(width: 1, height: 22).padding(.horizontal, 2)
-            dockIcon("arrow.uturn.backward", enabled: editable?.canUndo ?? false) { editable?.undo() }
-            dockIcon("arrow.uturn.forward", enabled: editable?.canRedo ?? false) { editable?.redo() }
+            dockIcon("arrow.uturn.backward", label: "Geri al",
+                     enabled: editable?.canUndo ?? false) { editable?.undo() }
+            dockIcon("arrow.uturn.forward", label: "Yinele",
+                     enabled: editable?.canRedo ?? false) { editable?.redo() }
         }
         .padding(4)
-        .frostedChip(cornerRadius: 14)
+        .glassPanel(cornerRadius: 16)
     }
 
     private func toolButton(_ tool: PlanTool, icon: String, label: String) -> some View {
         let on = editTool == tool
         return Button {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) { editTool = tool }
+            Haptics.selection()
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: icon).font(.system(size: 13, weight: .bold))
@@ -176,7 +271,8 @@ struct RoomDetailView: View {
         .buttonStyle(.plain)
     }
 
-    private func dockIcon(_ icon: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+    private func dockIcon(_ icon: String, label: String, enabled: Bool,
+                          action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 15, weight: .semibold))
@@ -185,56 +281,7 @@ struct RoomDetailView: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-    }
-
-    // MARK: - Edit lifecycle
-
-    private func enterEdit() {
-        guard let room = store.roomModel(for: roomID) else { return }
-        planMode = .twoD
-        editTool = .move
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            editable = EditableRoom(room)
-        }
-    }
-
-    private func save() {
-        guard let editable else { return }
-        guard editable.isDirty else { self.editable = nil; return }
-        if store.saveEditedRoom(id: roomID, editedDisplayRoom: editable.flattened()) {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { self.editable = nil }
-        } else {
-            saveFailed = true
-        }
-    }
-
-    private func attemptCancel() {
-        if editable?.isDirty ?? false {
-            showDiscard = true
-        } else {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { editable = nil }
-        }
-    }
-
-    private var segment: some View {
-        HStack(spacing: 4) {
-            ForEach(PlanMode.allCases, id: \.self) { mode in
-                Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) { planMode = mode }
-                } label: {
-                    Text(mode.rawValue)
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(planMode == mode ? .white : Brand.textSecondary)
-                        .padding(.vertical, 8).padding(.horizontal, 18)
-                        .background {
-                            if planMode == mode { Capsule().fill(Brand.clay) }
-                        }
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(4)
-        .frostedChip(cornerRadius: 14)
+        .accessibilityLabel(label)
     }
 
     private var fab: some View {
@@ -246,15 +293,37 @@ struct RoomDetailView: View {
                 .background(Brand.clayGradient, in: Circle())
                 .shadow(color: Brand.clayDeep.opacity(0.6), radius: 16, x: 0, y: 10)
         }
+        .accessibilityLabel("Görselleştir")
     }
 
-    private func circleButton(_ icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Brand.textPrimary)
-                .frame(width: 40, height: 40)
-                .background(.ultraThinMaterial, in: Circle())
+    // MARK: - Edit lifecycle
+
+    private func enterEdit() {
+        guard let room = store.roomModel(for: roomID) else { return }
+        planMode = .twoD
+        editTool = .move
+        Haptics.light()
+        withAnimation(spring) {
+            editable = EditableRoom(room)
+        }
+    }
+
+    private func save() {
+        guard let editable else { return }
+        guard editable.isDirty else { self.editable = nil; return }
+        if store.saveEditedRoom(id: roomID, editedDisplayRoom: editable.flattened()) {
+            Haptics.success()
+            withAnimation(spring) { self.editable = nil }
+        } else {
+            saveFailed = true
+        }
+    }
+
+    private func attemptCancel() {
+        if editable?.isDirty ?? false {
+            showDiscard = true
+        } else {
+            withAnimation(spring) { editable = nil }
         }
     }
 }

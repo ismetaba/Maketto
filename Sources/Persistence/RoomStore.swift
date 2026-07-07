@@ -201,6 +201,14 @@ final class RoomStore {
         refresh()
     }
 
+    func renameHome(id: UUID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let home = home(with: id) else { return }
+        home.name = trimmed
+        do { try modelContext.save() } catch { modelContext.rollback(); return }
+        refresh()
+    }
+
     func deleteHome(id: UUID) {
         guard let home = home(with: id) else { return }
         let paths = home.rooms.compactMap { $0.currentVersion?.snapshot?.usdzPath }
