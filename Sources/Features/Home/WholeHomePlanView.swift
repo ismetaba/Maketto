@@ -42,13 +42,13 @@ struct WholeHomePlanView: View {
             }
         } else if interactive {
             // Read the camera at BODY level so observation ties re-rendering to
-            // it; the canvas closure then captures plain values.
+            // it; the canvas then interpolates plain values.
             let zoom = cam.zoom * pinch
             let pan = CGSize(width: cam.pan.width + dragLive.width,
                              height: cam.pan.height + dragLive.height)
             GeometryReader { geo in
-                Canvas { context, size in
-                    draw(context, size: size, zoom: zoom, pan: pan)
+                AnimatedPlanCanvas(zoom: zoom, pan: pan) { context, size, z, p in
+                    draw(context, size: size, zoom: z, pan: p)
                 }
                 .contentShape(Rectangle())
                 .gesture(navigationGesture)

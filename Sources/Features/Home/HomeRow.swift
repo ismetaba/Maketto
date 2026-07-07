@@ -1,8 +1,11 @@
 import SwiftUI
 
-/// A home library card: hero map thumbnail on top, name + meta + chevron below.
+/// A home library card: hero map thumbnail on top; name, meta and an actions
+/// menu below (rename/delete must be visible, not long-press-only).
 struct HomeRow: View {
     let home: HomeSummary
+    var onRename: () -> Void = {}
+    var onDelete: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,13 +52,26 @@ struct HomeRow: View {
                     if home.totalArea > 0 {
                         metaItem("ruler", MeasurementFormat.squareMeters(home.totalArea))
                     }
-                    metaItem("calendar", home.createdAt.formatted(date: .abbreviated, time: .omitted))
+                    metaItem("calendar", MeasurementFormat.shortDate(home.createdAt))
                 }
             }
             Spacer(minLength: 0)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Brand.textFaint)
+            Menu {
+                Button { onRename() } label: {
+                    Label("Yeniden Adlandır", systemImage: "pencil")
+                }
+                Button(role: .destructive) { onDelete() } label: {
+                    Label("Evi Sil", systemImage: "trash")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Brand.textSecondary)
+                    .frame(width: 34, height: 34)
+                    .background(Brand.surfaceAlt, in: Circle())
+                    .contentShape(Circle())
+            }
+            .accessibilityLabel("Ev seçenekleri")
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)

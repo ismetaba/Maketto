@@ -74,25 +74,30 @@ struct HomeListView: View {
 
     private var homeList: some View {
         ScrollView {
+            // Cards are plain views with a tap gesture (not Buttons) so the
+            // ellipsis Menu inside each card stays independently tappable.
             LazyVStack(spacing: 16) {
                 ForEach(store.homes) { home in
-                    Button { router.push(.homeDetail(home.id)) } label: {
-                        HomeRow(home: home)
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        Button { beginRename(home) } label: {
-                            Label("Yeniden Adlandır", systemImage: "pencil")
+                    HomeRow(home: home,
+                            onRename: { beginRename(home) },
+                            onDelete: { deleteTarget = home })
+                        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .onTapGesture { router.push(.homeDetail(home.id)) }
+                        .contextMenu {
+                            Button { beginRename(home) } label: {
+                                Label("Yeniden Adlandır", systemImage: "pencil")
+                            }
+                            Button(role: .destructive) { deleteTarget = home } label: {
+                                Label("Evi Sil", systemImage: "trash")
+                            }
                         }
-                        Button(role: .destructive) { deleteTarget = home } label: {
-                            Label("Evi Sil", systemImage: "trash")
-                        }
-                    }
                 }
             }
             .padding(.horizontal, 18)
             .padding(.top, 6)
             .padding(.bottom, 128)
+            .frame(maxWidth: 560)            // single readable column on iPad
+            .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
     }
@@ -120,6 +125,7 @@ struct HomeListView: View {
                     RoundedRectangle(cornerRadius: 20, style: .continuous)
                         .strokeBorder(Brand.hairline, lineWidth: 1)
                 )
+                .frame(maxWidth: 480)
                 .padding(.horizontal, 34)
                 .padding(.top, 28)
 
@@ -138,7 +144,7 @@ struct HomeListView: View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Brand.evergreen)
+                .foregroundStyle(Brand.evergreenAdaptive)
                 .frame(width: 34, height: 34)
                 .background(Brand.evergreenSoft.opacity(0.15), in: Circle())
             Text(text)

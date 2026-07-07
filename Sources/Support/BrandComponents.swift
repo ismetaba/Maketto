@@ -6,7 +6,7 @@ import UIKit
 /// The Maketto mark: two nested arches + a brass dot. Drawn so we control color.
 struct MakettoLogo: View {
     var size: CGFloat = 34
-    var tint: Color = Brand.evergreen
+    var tint: Color = Brand.evergreenAdaptive
 
     var body: some View {
         Canvas { ctx, sz in
@@ -247,10 +247,13 @@ struct RoomChip: View {
             .padding(.horizontal, 13)
             .padding(.vertical, 9)
             .background {
-                if selected {
-                    Capsule().fill(tint.fill)
-                } else {
+                // Material stays underneath the tint so the selected chip keeps
+                // its frosted backing (dark-mode tints are translucent).
+                ZStack {
                     Capsule().fill(.ultraThinMaterial)
+                    if selected {
+                        Capsule().fill(tint.fill)
+                    }
                 }
             }
             .overlay(
@@ -281,16 +284,25 @@ struct RoomChipsRow: View {
     let onToggle: (UUID?) -> Void
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(entries) { entry in
-                    RoomChip(name: entry.name, tint: entry.tint,
-                             selected: entry.id == selectedID) {
-                        onToggle(entry.id == selectedID ? nil : entry.id)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(entries) { entry in
+                        RoomChip(name: entry.name, tint: entry.tint,
+                                 selected: entry.id == selectedID) {
+                            onToggle(entry.id == selectedID ? nil : entry.id)
+                        }
                     }
                 }
+                .padding(.horizontal, 14)
             }
-            .padding(.horizontal, 16)
+            .onChange(of: selectedID) { _, id in
+                guard let id else { return }
+                withAnimation(.maketto) { proxy.scrollTo(id, anchor: .center) }
+            }
+            .onAppear {
+                if let id = selectedID { proxy.scrollTo(id, anchor: .center) }
+            }
         }
     }
 }
@@ -346,7 +358,7 @@ extension View {
 
 extension Animation {
     /// The app's signature selection/panel spring.
-    static let maketto = Animation.spring(response: 0.35, dampingFraction: 0.85)
+    static var maketto: Animation { .spring(response: 0.35, dampingFraction: 0.85) }
 }
 
 // MARK: - Secondary button

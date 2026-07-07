@@ -71,13 +71,16 @@ struct HomeDetailView: View {
 
             VStack(spacing: 0) {
                 topBar(home)
+                // The controls live in the free region BETWEEN the bars, so
+                // they can never collide with the card/chips on short screens.
                 Spacer()
+                    .frame(maxWidth: .infinity)
+                    .overlay(alignment: .trailing) {
+                        MapControlStack(camera: camera)
+                            .padding(.trailing, 12)
+                    }
                 bottomStack(home)
             }
-        }
-        .overlay(alignment: .trailing) {
-            MapControlStack(camera: camera)
-                .padding(.trailing, 12)
         }
     }
 
@@ -137,8 +140,8 @@ struct HomeDetailView: View {
             if let sel = selectedRoomID,
                let idx = ordered.firstIndex(where: { $0.id == sel }) {
                 roomCard(ordered[idx], index: idx)
+                    .frame(maxWidth: 468)   // don't stretch edge-to-edge on iPad
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .id(sel)
             }
 
             RoomChipsRow(
@@ -192,9 +195,15 @@ struct HomeDetailView: View {
                     renameText = placed.name
                     renamingRoom = placed
                 } label: {
-                    Label("Ad Değiştir", systemImage: "pencil")
+                    Image(systemName: "pencil")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Brand.textPrimary)
+                        .frame(width: 50, height: 50)
+                        .background(Brand.card, in: Circle())
+                        .overlay(Circle().strokeBorder(Brand.hairline, lineWidth: 1))
                 }
-                .buttonStyle(SoftButtonStyle())
+                .buttonStyle(.plain)
+                .accessibilityLabel("Yeniden Adlandır")
 
                 Button { router.push(.roomDetail(placed.id)) } label: {
                     HStack(spacing: 8) {

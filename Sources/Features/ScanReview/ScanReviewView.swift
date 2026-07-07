@@ -15,6 +15,7 @@ struct ScanReviewView: View {
     @State private var homeName = "Evim"
     @State private var selectedRoomID: UUID?
     @State private var saveFailed = false
+    @State private var showRescanConfirm = false
     @State private var camera = PlanCamera()
 
     init(rooms: [RoomModel], modelURLs: [UUID: URL],
@@ -42,17 +43,21 @@ struct ScanReviewView: View {
             .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                summaryPill.padding(.top, 10)
+                topRow
+                // The controls live between the bars so they can never collide
+                // with the chips/card on short screens.
                 Spacer()
+                    .frame(maxWidth: .infinity)
+                    .overlay(alignment: .trailing) {
+                        MapControlStack(camera: camera).padding(.trailing, 12)
+                    }
                 VStack(spacing: 12) {
                     chipsRow
                     bottomCard
                 }
+                .frame(maxWidth: 468)   // don't stretch edge-to-edge on iPad
                 .padding(.bottom, 6)
             }
-        }
-        .overlay(alignment: .trailing) {
-            MapControlStack(camera: camera).padding(.trailing, 12)
         }
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
@@ -61,9 +66,31 @@ struct ScanReviewView: View {
         } message: {
             Text("Bir sorun oluştu. Lütfen tekrar deneyin.")
         }
+        .confirmationDialog("Yeniden taransın mı?", isPresented: $showRescanConfirm,
+                            titleVisibility: .visible) {
+            Button("Yeniden Tara", role: .destructive) { onRescan() }
+            Button("Vazgeç", role: .cancel) {}
+        } message: {
+            Text("Bu tarama ve yaptığınız tüm düzenlemeler silinir.")
+        }
     }
 
     // MARK: - Pieces
+
+    /// Rescan on the left, scan summary centred, ghost slot balancing the row.
+    private var topRow: some View {
+        HStack(spacing: 8) {
+            CircleIconButton("arrow.counterclockwise", accessibilityLabel: "Yeniden tara") {
+                showRescanConfirm = true
+            }
+            Spacer()
+            summaryPill
+            Spacer()
+            Color.clear.frame(width: 40, height: 40)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+    }
 
     private var summaryPill: some View {
         VStack(spacing: 2) {
@@ -118,17 +145,8 @@ struct ScanReviewView: View {
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(EvergreenButtonStyle())
-
-            Button { onRescan() } label: {
-                Text("Yeniden Tara")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Brand.textSecondary)
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 2)
         }
         .padding(18)
-        .padding(.bottom, 10)
         .glassPanel(cornerRadius: 26)
         .padding(.horizontal, 14)
     }

@@ -17,30 +17,34 @@ enum RoomPalette {
         return all[((index % n) + n) % n]
     }
 
+    /// Light fills are soft pastels with accents dark enough for 11pt-bold
+    /// labels (≥ ~4.5:1 on their own fill). Dark fills are hand-picked OPAQUE
+    /// colors — alpha-over-paper washed every hue into the same grey-green and
+    /// let the grid bleed through room interiors.
     static let all: [RoomTint] = [
         RoomTint( // wheat / brass
-            fill: Color(light: Color(hex: 0xF2E9D2), dark: Color(hex: 0xC8A862, alpha: 0.17)),
-            accent: Color(light: Color(hex: 0x9C7F3E), dark: Color(hex: 0xD9C088))
+            fill: Color(light: Color(hex: 0xF2E9D2), dark: Color(hex: 0x453A1F)),
+            accent: Color(light: Color(hex: 0x77602E), dark: Color(hex: 0xD9C088))
         ),
         RoomTint( // sage / evergreen
-            fill: Color(light: Color(hex: 0xE1EAD9), dark: Color(hex: 0x87C29B, alpha: 0.15)),
-            accent: Color(light: Color(hex: 0x5E7E61), dark: Color(hex: 0xA8CDAF))
+            fill: Color(light: Color(hex: 0xE1EAD9), dark: Color(hex: 0x24402E)),
+            accent: Color(light: Color(hex: 0x3F5C43), dark: Color(hex: 0xA8CDAF))
         ),
         RoomTint( // blush / clay
-            fill: Color(light: Color(hex: 0xF4E1D2), dark: Color(hex: 0xE0906B, alpha: 0.15)),
-            accent: Color(light: Color(hex: 0xB5734E), dark: Color(hex: 0xE0B18F))
+            fill: Color(light: Color(hex: 0xF4E1D2), dark: Color(hex: 0x462E22)),
+            accent: Color(light: Color(hex: 0x8F4F2C), dark: Color(hex: 0xE0B18F))
         ),
         RoomTint( // mist / teal
-            fill: Color(light: Color(hex: 0xDFEAEA), dark: Color(hex: 0x7FB5BD, alpha: 0.15)),
-            accent: Color(light: Color(hex: 0x54777D), dark: Color(hex: 0x9FC6CC))
+            fill: Color(light: Color(hex: 0xDFEAEA), dark: Color(hex: 0x1F3B40)),
+            accent: Color(light: Color(hex: 0x3E5B60), dark: Color(hex: 0x9FC6CC))
         ),
         RoomTint( // heather / plum
-            fill: Color(light: Color(hex: 0xEAE2EC), dark: Color(hex: 0xB99BC5, alpha: 0.15)),
-            accent: Color(light: Color(hex: 0x7A6486), dark: Color(hex: 0xC5AED1))
+            fill: Color(light: Color(hex: 0xEAE2EC), dark: Color(hex: 0x362C40)),
+            accent: Color(light: Color(hex: 0x5D4969), dark: Color(hex: 0xC5AED1))
         ),
         RoomTint( // olive / moss
-            fill: Color(light: Color(hex: 0xEBEBD3), dark: Color(hex: 0xC2C273, alpha: 0.14)),
-            accent: Color(light: Color(hex: 0x77753D), dark: Color(hex: 0xCFCD8D))
+            fill: Color(light: Color(hex: 0xEBEBD3), dark: Color(hex: 0x393B1D)),
+            accent: Color(light: Color(hex: 0x5C5A26), dark: Color(hex: 0xCFCD8D))
         ),
     ]
 }

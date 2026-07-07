@@ -6,6 +6,7 @@ struct HomeScanScreen: View {
     @Environment(Router.self) private var router
     @State private var scanner = HomeScanner()
     @State private var pulse = false
+    @State private var showExitConfirm = false
 
     var body: some View {
         content
@@ -57,24 +58,33 @@ struct HomeScanScreen: View {
 
             HStack {
                 CircleIconButton("chevron.left", dark: true, accessibilityLabel: "Geri") {
-                    router.pop()
+                    showExitConfirm = true
                 }
                 Spacer()
             }
             .padding(.horizontal, 16)
             .padding(.top, 6)
 
+            // The hint lives at the BOTTOM: RoomPlan draws its own coaching
+            // text top-centre, and the two must never fight for the same spot.
             VStack {
-                hintPill.padding(.top, 64)
                 Spacer()
+                hintPill.padding(.bottom, 14)
                 Button { scanner.finish() } label: {
                     Label("Taramayı Bitir", systemImage: "checkmark")
                 }
                 .buttonStyle(ClayButtonStyle())
-                .padding(.bottom, 44)
+                .padding(.bottom, 30)
             }
         }
         .onAppear { pulse = true }
+        .confirmationDialog("Taramadan çıkılsın mı?", isPresented: $showExitConfirm,
+                            titleVisibility: .visible) {
+            Button("Çık", role: .destructive) { router.pop() }
+            Button("Taramaya Devam", role: .cancel) {}
+        } message: {
+            Text("Bu tarama kaydedilmeden silinir.")
+        }
         #else
         ContentUnavailableView("RoomPlan yok", systemImage: "xmark.octagon")
         #endif

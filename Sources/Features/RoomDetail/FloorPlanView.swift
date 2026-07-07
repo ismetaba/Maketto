@@ -22,6 +22,10 @@ struct FloorPlanView: View {
     var interactive: Bool = true
     /// External camera; when nil (thumbnails, previews) an internal one is used.
     var camera: PlanCamera?
+    /// Screen regions covered by floating chrome (top bar, docks); the
+    /// measurement pill is clamped inside these so it never renders off-screen
+    /// or under the chrome.
+    var chromeInsets: EdgeInsets = EdgeInsets()
     /// Non-nil puts the plan in edit mode, rendered from this live graph.
     var editing: EditableRoom?
     var editTool: PlanTool = .move
@@ -61,8 +65,8 @@ struct FloorPlanView: View {
             let display = editing?.flattened() ?? room
             let corners = editing.map { Array($0.corners.values) }
             GeometryReader { geo in
-                Canvas { context, size in
-                    draw(context, size: size, zoom: zoom, pan: pan,
+                AnimatedPlanCanvas(zoom: zoom, pan: pan) { context, size, z, p in
+                    draw(context, size: size, zoom: z, pan: p,
                          display: display, corners: corners)
                 }
                 .contentShape(Rectangle())
@@ -219,7 +223,8 @@ struct FloorPlanView: View {
         FloorPlanRenderer.drawRoom(display, into: context, t: t, ink: ink, showFurniture: showFurniture)
 
         if let id = selectedWallID, let wall = display.walls.first(where: { $0.id == id }) {
-            drawSelection(context, wall: wall, t: t, centroid: PlanGeometry.centroid(display))
+            drawSelection(context, size: size, wall: wall, t: t,
+                          centroid: PlanGeometry.centroid(display))
         }
 
         if let corners { drawHandles(context, corners: corners, t: t) }
@@ -237,7 +242,7 @@ struct FloorPlanView: View {
         }
     }
 
-    private func drawSelection(_ context: GraphicsContext, wall: Wall,
+    private func drawSelection(_ context: GraphicsContext, size: CGSize, wall: Wall,
                                t: PlanGeometry.Transform, centroid: Point2D) {
         let a = t.apply(wall.start), b = t.apply(wall.end)
         var hl = Path(); hl.move(to: a); hl.addLine(to: b)
@@ -251,13 +256,23 @@ struct FloorPlanView: View {
         let nTip = t.apply(d.midpoint + d.outwardNormal)
         var nx = nTip.x - mid.x, ny = nTip.y - mid.y
         let nl = hypot(nx, ny); if nl > 0 { nx /= nl; ny /= nl }
-        let pillCenter = CGPoint(x: mid.x + nx * 28, y: mid.y + ny * 28)
 
         let resolved = context.resolve(
             Text(d.text).font(.system(size: 14, weight: .heavy)).foregroundColor(.white)
         )
         let ts = resolved.measure(in: CGSize(width: 240, height: 60))
         let w = ts.width + 22, h = ts.height + 12
+
+        // Clamp the pill inside the visible, chrome-free region so an outer
+        // wall's measurement never renders off-screen or under the bars.
+        var pillCenter = CGPoint(x: mid.x + nx * 28, y: mid.y + ny * 28)
+        let minX = chromeInsets.leading + w / 2 + 6
+        let maxX = size.width - chromeInsets.trailing - w / 2 - 6
+        let minY = chromeInsets.top + h / 2 + 6
+        let maxY = size.height - chromeInsets.bottom - h / 2 - 6
+        if minX < maxX { pillCenter.x = min(max(pillCenter.x, minX), maxX) }
+        if minY < maxY { pillCenter.y = min(max(pillCenter.y, minY), maxY) }
+
         let rect = CGRect(x: pillCenter.x - w / 2, y: pillCenter.y - h / 2, width: w, height: h)
         context.fill(Capsule().path(in: rect), with: .color(cSel))
         context.draw(resolved, at: pillCenter, anchor: .center)

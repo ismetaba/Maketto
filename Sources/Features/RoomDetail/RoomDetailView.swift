@@ -66,7 +66,16 @@ struct RoomDetailView: View {
 
             VStack(spacing: 0) {
                 topBar(room: room)
+                // Controls live in the free region between the bars so they
+                // can never collide with the docks or the FAB.
                 Spacer()
+                    .frame(maxWidth: .infinity)
+                    .overlay(alignment: .trailing) {
+                        if isEditing || planMode == .twoD {
+                            MapControlStack(camera: camera)
+                                .padding(.trailing, 12)
+                        }
+                    }
                 if isEditing {
                     VStack(spacing: 10) {
                         editHint
@@ -86,22 +95,24 @@ struct RoomDetailView: View {
                 }
             }
         }
-        .overlay(alignment: .trailing) {
-            if isEditing || planMode == .twoD {
-                MapControlStack(camera: camera)
-                    .padding(.trailing, 12)
-            }
-        }
+    }
+
+    /// Regions of the full-bleed canvas covered by floating chrome (status bar
+    /// + top bar above, docks + home indicator below) — keeps the measurement
+    /// pill clamped into the visible map.
+    private var chromeInsets: EdgeInsets {
+        EdgeInsets(top: 112, leading: 10, bottom: 150, trailing: 10)
     }
 
     @ViewBuilder
     private func canvas(room: RoomModel) -> some View {
         if let editable {
-            FloorPlanView(room: room, camera: camera, editing: editable, editTool: editTool)
+            FloorPlanView(room: room, camera: camera, chromeInsets: chromeInsets,
+                          editing: editable, editTool: editTool)
         } else {
             switch planMode {
             case .twoD:
-                FloorPlanView(room: room, camera: camera)
+                FloorPlanView(room: room, camera: camera, chromeInsets: chromeInsets)
             case .threeD:
                 // The URL lookup stats the disk, so resolve it only when 3D shows.
                 if let modelURL = store.modelURL(for: roomID) {
@@ -109,7 +120,7 @@ struct RoomDetailView: View {
                 } else {
                     ZStack {
                         Brand.surface
-                        ContentUnavailableView("3B model yok", systemImage: "cube")
+                        ContentUnavailableView("3D model yok", systemImage: "cube")
                     }
                 }
             }
@@ -124,24 +135,6 @@ struct RoomDetailView: View {
                 CircleIconButton("xmark", accessibilityLabel: "Düzenlemeden çık") { attemptCancel() }
             } else {
                 CircleIconButton("chevron.left", accessibilityLabel: "Geri") { router.pop() }
-            }
-            Spacer()
-            VStack(spacing: 1) {
-                Overline(isEditing ? "Düzenleniyor" : (room.kind ?? .unidentified).displayName,
-                         color: isEditing ? Brand.clay : Brand.textSecondary, size: 9)
-                HStack(spacing: 7) {
-                    Text(room.name)
-                        .font(.display(19))
-                        .foregroundStyle(Brand.textPrimary)
-                        .lineLimit(1)
-                    if !isEditing {
-                        Text("v\(store.versionCount(for: roomID))")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 8).padding(.vertical, 2)
-                            .background(Brand.gold, in: Capsule())
-                    }
-                }
             }
             Spacer()
             if isEditing {
@@ -166,6 +159,28 @@ struct RoomDetailView: View {
                     CircleIconButton("pencil.and.ruler", accessibilityLabel: "Planı düzenle") { enterEdit() }
                 }
             }
+        }
+        // Overlay with symmetric padding keeps the title truly centred even
+        // though the two button sides have different widths.
+        .overlay {
+            VStack(spacing: 1) {
+                Overline(isEditing ? "Düzenleniyor" : (room.kind ?? .unidentified).displayName,
+                         color: isEditing ? Brand.clay : Brand.textSecondary, size: 9)
+                HStack(spacing: 7) {
+                    Text(room.name)
+                        .font(.display(19))
+                        .foregroundStyle(Brand.textPrimary)
+                        .lineLimit(1)
+                    if !isEditing {
+                        Text("v\(store.versionCount(for: roomID))")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Color(hex: 0x453516))
+                            .padding(.horizontal, 8).padding(.vertical, 2)
+                            .background(Brand.gold, in: Capsule())
+                    }
+                }
+            }
+            .padding(.horizontal, 96)
         }
         .padding(.horizontal, 8)
         .frame(height: 52)

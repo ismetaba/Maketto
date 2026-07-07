@@ -20,9 +20,11 @@ final class PlanCamera {
 
     // MARK: - Button controls (zoom about the view centre)
 
-    func zoomIn() { setZoom(zoom * Self.zoomStep) }
-    func zoomOut() { setZoom(zoom / Self.zoomStep) }
-    func reset() { zoom = 1; pan = .zero }
+    /// Button-driven changes animate (the canvases interpolate zoom/pan via
+    /// `AnimatedPlanCanvas`); gesture commits below stay 1:1 un-animated.
+    func zoomIn() { withAnimation(.maketto) { setZoom(zoom * Self.zoomStep) } }
+    func zoomOut() { withAnimation(.maketto) { setZoom(zoom / Self.zoomStep) } }
+    func reset() { withAnimation(.maketto) { zoom = 1; pan = .zero } }
 
     /// Keeps the world point currently at the view centre fixed while zooming:
     /// under `Transform.composed(in:zoom:pan:)`, that point stays put iff the
