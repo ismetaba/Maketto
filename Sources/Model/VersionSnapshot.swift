@@ -7,12 +7,12 @@ struct VersionSnapshot: Codable, Hashable, Sendable {
     /// Codable layer without a SwiftData schema migration.
     var schemaVersion: Int
     var room: RoomModel
-    /// Populated by the furniture-placement milestone. Empty today.
+    /// Furniture placed by the user, in the same frame as `room`.
     var furniture: [PlacedFurniture]
-    /// Populated by the Gemini render milestone. Empty today.
+    /// Populated by the AI render milestone. Empty today.
     var renders: [RenderImageRef]
-    /// Filename of the exported RoomPlan USDZ model in the app's models
-    /// directory (nil if export failed or none captured).
+    /// Filename of an exported RoomPlan USDZ model in the app's models
+    /// directory (nil if none was captured).
     var usdzPath: String?
 
     init(
@@ -29,38 +29,26 @@ struct VersionSnapshot: Codable, Hashable, Sendable {
         self.usdzPath = usdzPath
     }
 
-    static let currentSchemaVersion = 1
-}
+    static let currentSchemaVersion = 2
 
-/// Placeholder for the furniture-placement milestone. Forward-valid default ([]).
-struct PlacedFurniture: Codable, Hashable, Identifiable, Sendable {
-    let id: UUID
-    var name: String
-    /// Footprint center on the floor plane, meters.
-    var center: Point2D
-    var width: Double
-    var depth: Double
-    /// Yaw in radians.
-    var rotation: Double
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, room, furniture, renders, usdzPath
+    }
 
-    init(
-        id: UUID = UUID(),
-        name: String,
-        center: Point2D,
-        width: Double,
-        depth: Double,
-        rotation: Double = 0
-    ) {
-        self.id = id
-        self.name = name
-        self.center = center
-        self.width = width
-        self.depth = depth
-        self.rotation = rotation
+    /// Only `room` is required: every other field decodes with a default, so a
+    /// snapshot written by an older (or newer) build never fails to load —
+    /// a failed decode would make the room silently disappear.
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        room = try c.decode(RoomModel.self, forKey: .room)
+        furniture = (try? c.decodeIfPresent([PlacedFurniture].self, forKey: .furniture)) ?? []
+        renders = (try? c.decodeIfPresent([RenderImageRef].self, forKey: .renders)) ?? []
+        usdzPath = try c.decodeIfPresent(String.self, forKey: .usdzPath)
     }
 }
 
-/// Reference to a generated render image stored on disk (Gemini milestone).
+/// Reference to a generated render image stored on disk (AI render milestone).
 /// Only the relative path lives in the snapshot; the bytes live in the app's
 /// render directory so multi-MB images stay out of the store.
 struct RenderImageRef: Codable, Hashable, Identifiable, Sendable {

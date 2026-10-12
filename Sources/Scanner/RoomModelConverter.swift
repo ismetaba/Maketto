@@ -39,11 +39,15 @@ enum RoomModelConverter {
         objects capturedObjects: [CapturedRoom.Object],
         name: String, kind: RoomKind, createdAt: Date = .now
     ) -> RoomModel {
-        let walls = capturedWalls.map(makeWall(from:))
+        // Snap nearly-touching wall ends into shared corners BEFORE attaching
+        // openings, so offsets are measured on the final walls and the room
+        // closes into a floor polygon far more often.
+        let walls = FloorGeometry.weldCorners(capturedWalls.map(makeWall(from:)))
+        let floorY = floorLevel(of: capturedWalls)
         let openingModels =
-            doors.compactMap { makeOpening(from: $0, type: .door, walls: walls) }
-            + windows.compactMap { makeOpening(from: $0, type: .window, walls: walls) }
-            + openings.compactMap { makeOpening(from: $0, type: .opening, walls: walls) }
+            doors.compactMap { makeOpening(from: $0, type: .door, walls: walls, floorY: floorY) }
+            + windows.compactMap { makeOpening(from: $0, type: .window, walls: walls, floorY: floorY) }
+            + openings.compactMap { makeOpening(from: $0, type: .opening, walls: walls, floorY: floorY) }
         let objects = capturedObjects.map(makeObject(from:))
         let outline = FloorGeometry.outline(fromWalls: walls)
         return RoomModel(
@@ -122,6 +126,17 @@ enum RoomModelConverter {
         }
     }
 
+    /// World Y of the floor: the median wall bottom. ARKit's origin is where
+    /// the session started (the phone, ~1.3 m up), NOT the floor, so heights
+    /// such as window sills must be measured from here.
+    static func floorLevel(of walls: [CapturedRoom.Surface]) -> Float {
+        let bottoms = walls
+            .map { $0.transform.columns.3.y - $0.dimensions.y / 2 }
+            .sorted()
+        guard !bottoms.isEmpty else { return 0 }
+        return bottoms[bottoms.count / 2]
+    }
+
     // MARK: - Walls
 
     private static func makeWall(from surface: CapturedRoom.Surface) -> Wall {
@@ -149,7 +164,8 @@ enum RoomModelConverter {
     private static func makeOpening(
         from surface: CapturedRoom.Surface,
         type: Opening.Kind,
-        walls: [Wall]
+        walls: [Wall],
+        floorY: Float
     ) -> Opening? {
         let center = Point2D(droppingYFrom: surface.transform.columns.3.xyz)
 
@@ -172,7 +188,7 @@ enum RoomModelConverter {
 
         let along = (center - wall.start).dot(wall.direction)
         let offset = min(max(along, 0), wall.length)
-        let centerY = Double(surface.transform.columns.3.y)
+        let centerY = Double(surface.transform.columns.3.y - floorY)   // above the floor
         let height = Double(surface.dimensions.y)
         let sill: Double? = (type == .window) ? max(centerY - height / 2, 0) : nil
         return Opening(

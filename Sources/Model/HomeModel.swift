@@ -52,6 +52,17 @@ public enum HomeGeometry {
         return out
     }
 
+    /// Placed furniture re-expressed in another frame (centre moves, yaw turns).
+    public static func transform(_ furniture: [PlacedFurniture], by pose: Pose2D) -> [PlacedFurniture] {
+        if pose == .identity { return furniture }
+        return furniture.map {
+            var f = $0
+            f.center = pose.apply(to: f.center)
+            f.rotation = FurnitureGeometry.normalized(f.rotation + pose.rotation)
+            return f
+        }
+    }
+
     /// Dominant wall skew of a set of rooms, radians in [-π/4, π/4]. Length-weighted
     /// circular mean over the 90°-periodic wall orientation (×4 → full circle → /4).
     public static func dominantAngle(of rooms: [RoomModel]) -> Double {
@@ -111,22 +122,30 @@ public struct PlacedRoom: Codable, Hashable, Identifiable, Sendable {
     public var kind: RoomKind?
     public var sortIndex: Int
     public var room: RoomModel     // geometry (home-world frame in slice 1)
+    public var furniture: [PlacedFurniture]   // same frame as `room`
     public var placement: Pose2D   // R_i -> H ; .identity in slice 1
     public var versionId: UUID?
 
     public init(id: UUID, name: String, kind: RoomKind?, sortIndex: Int,
-                room: RoomModel, placement: Pose2D = .identity, versionId: UUID? = nil) {
+                room: RoomModel, furniture: [PlacedFurniture] = [],
+                placement: Pose2D = .identity, versionId: UUID? = nil) {
         self.id = id
         self.name = name
         self.kind = kind
         self.sortIndex = sortIndex
         self.room = room
+        self.furniture = furniture
         self.placement = placement
         self.versionId = versionId
     }
 
     /// The room geometry expressed in the home frame.
     public var roomInHomeFrame: RoomModel { HomeGeometry.transform(room, by: placement) }
+
+    /// The room's furniture expressed in the home frame.
+    public var furnitureInHomeFrame: [PlacedFurniture] {
+        HomeGeometry.transform(furniture, by: placement)
+    }
 }
 
 /// A whole home = many placed rooms in one coordinate frame. Transient aggregate
@@ -156,5 +175,15 @@ public struct HomeModel: Codable, Hashable, Identifiable, Sendable {
     /// Every room's geometry in the shared home frame — feed straight to the plan.
     public var roomsInHomeFrame: [RoomModel] {
         orderedRooms.map(\.roomInHomeFrame)
+    }
+
+    /// Every room's furniture in the shared home frame.
+    public var furnitureInHomeFrame: [PlacedFurniture] {
+        orderedRooms.flatMap(\.furnitureInHomeFrame)
+    }
+
+    /// Total floor area, m².
+    public var totalArea: Double {
+        rooms.reduce(0) { $0 + PlanGeometry.area(of: $1.room) }
     }
 }

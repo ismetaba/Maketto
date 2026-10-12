@@ -7,6 +7,9 @@ options:
     iOS: "17.0"
   groupSortPosition: top
   generateEmptyDirectories: true
+  # The UI is Turkish-first: Turkish is the development language, so system
+  # UI (menus, pickers, share sheet) matches the app's own copy.
+  developmentLanguage: tr
 
 settings:
   base:
@@ -39,7 +42,10 @@ targets:
         CFBundleDisplayName: Maketto
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
-        UILaunchScreen: {}
+        CFBundleLocalizations:
+          - tr
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         # iPhone is portrait-only: the map chrome (bottom card + chips + docks)
@@ -52,8 +58,9 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         NSCameraUsageDescription: >-
-          We use the camera and LiDAR sensor to scan the dimensions of your
-          room so you can design and furnish it.
+          Maketto, evinizin ölçülerini çıkarmak için kamerayı ve LiDAR
+          sensörünü kullanır; böylece planı düzenleyip eşya yerleştirebilirsiniz.
+        ITSAppUsesNonExemptEncryption: false
         UIRequiredDeviceCapabilities:
           - arm64
         UIAppFonts:
@@ -73,12 +80,33 @@ targets:
         ENABLE_PREVIEWS: YES
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
 
+  MakettoTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Tests/MakettoTests
+    dependencies:
+      - target: Maketto
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.matt.maketto.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+
 schemes:
   Maketto:
     build:
       targets:
         Maketto: all
+        MakettoTests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: true
+      targets:
+        - MakettoTests
     archive:
       config: Release

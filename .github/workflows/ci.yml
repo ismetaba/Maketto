@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    name: Build & test (iOS)
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      # A generic device build compiles every RoomPlan/ARKit code path, which
+      # the simulator SDK may compile out.
+      - name: Build for device
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Maketto.xcodeproj -scheme Maketto -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO -quiet
+
+      - name: Unit tests (simulator)
+        run: |
+          set -o pipefail
+          UDID=$(python3 scripts/pick-simulator.py)
+          xcodebuild test \
+            -project Maketto.xcodeproj -scheme Maketto -configuration Debug \
+            -destination "id=$UDID" \
+            CODE_SIGNING_ALLOWED=NO -quiet
