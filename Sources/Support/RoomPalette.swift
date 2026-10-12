@@ -1,0 +1,71 @@
+import SwiftUI
+
+/// One room's map tint: a soft floor fill plus a stronger accent for outlines,
+/// dots and labels.
+struct RoomTint: Equatable {
+    let fill: Color
+    let accent: Color
+}
+
+/// Distinct-but-harmonious room colors for the home map — the robot-vacuum-app
+/// idea (every room has its own tint so the map reads at a glance) tuned to the
+/// warm Maketto palette. Tints are assigned by the room's stable position in
+/// the home (sort order), so a room keeps its color across screens.
+enum RoomPalette {
+    static func tint(_ index: Int) -> RoomTint {
+        let n = all.count
+        return all[((index % n) + n) % n]
+    }
+
+    /// Light fills are soft pastels with accents dark enough for 11pt-bold
+    /// labels (≥ ~4.5:1 on their own fill). Dark fills are hand-picked OPAQUE
+    /// colors — alpha-over-paper washed every hue into the same grey-green and
+    /// let the grid bleed through room interiors.
+    static let all: [RoomTint] = [
+        RoomTint( // wheat / brass
+            fill: Color(light: Color(hex: 0xF2E9D2), dark: Color(hex: 0x453A1F)),
+            accent: Color(light: Color(hex: 0x77602E), dark: Color(hex: 0xD9C088))
+        ),
+        RoomTint( // sage / evergreen
+            fill: Color(light: Color(hex: 0xE1EAD9), dark: Color(hex: 0x24402E)),
+            accent: Color(light: Color(hex: 0x3F5C43), dark: Color(hex: 0xA8CDAF))
+        ),
+        RoomTint( // blush / clay
+            fill: Color(light: Color(hex: 0xF4E1D2), dark: Color(hex: 0x462E22)),
+            accent: Color(light: Color(hex: 0x8F4F2C), dark: Color(hex: 0xE0B18F))
+        ),
+        RoomTint( // mist / teal
+            fill: Color(light: Color(hex: 0xDFEAEA), dark: Color(hex: 0x1F3B40)),
+            accent: Color(light: Color(hex: 0x3E5B60), dark: Color(hex: 0x9FC6CC))
+        ),
+        RoomTint( // heather / plum
+            fill: Color(light: Color(hex: 0xEAE2EC), dark: Color(hex: 0x362C40)),
+            accent: Color(light: Color(hex: 0x5D4969), dark: Color(hex: 0xC5AED1))
+        ),
+        RoomTint( // olive / moss
+            fill: Color(light: Color(hex: 0xEBEBD3), dark: Color(hex: 0x393B1D)),
+            accent: Color(light: Color(hex: 0x5C5A26), dark: Color(hex: 0xCFCD8D))
+        ),
+    ]
+}
+
+// MARK: - RoomKind presentation
+
+extension RoomKind {
+    /// Human-facing Turkish name (shared with default room naming).
+    var displayName: String { RoomNaming.defaultName(for: self) }
+
+    /// SF Symbol used in kind pickers and room cards.
+    var icon: String {
+        switch self {
+        case .livingRoom: return "sofa"
+        case .bedroom: return "bed.double"
+        case .bathroom: return "shower"
+        case .kitchen: return "fork.knife"
+        case .diningRoom: return "table.furniture"
+        case .hallway: return "door.left.hand.open"
+        case .balcony: return "sun.max"
+        case .unidentified: return "square.split.bottomrightquarter"
+        }
+    }
+}

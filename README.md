@@ -14,8 +14,8 @@ Sonraki milestone'lar: 2D plan editörü, eşya yerleştirme, native 3D, Gemini 
 
 ## Projeyi üret & aç
 ```bash
-xcodegen generate          # project.yml -> ios-home-design.xcodeproj
-open ios-home-design.xcodeproj
+xcodegen generate          # project.yml -> Maketto.xcodeproj
+open Maketto.xcodeproj
 ```
 Xcode'da hedefi iPhone'una seç, imzalama için kendi Apple ID takımını gir, Run.
 

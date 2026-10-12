@@ -1,9 +1,15 @@
 import SwiftUI
 
-/// Home library — "Evlerim": every home you've scanned, with a whole-home thumbnail.
+/// Home library — "Evlerim": every home you've scanned, with a hero map
+/// thumbnail per card. Long-press a card to rename or delete; the scan CTA is
+/// pinned at the bottom, thumb-reach first.
 struct HomeListView: View {
     @Environment(RoomStore.self) private var store
     @Environment(Router.self) private var router
+
+    @State private var renameTarget: HomeSummary?
+    @State private var renameText = ""
+    @State private var deleteTarget: HomeSummary?
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -14,26 +20,43 @@ struct HomeListView: View {
                 if store.homes.isEmpty {
                     emptyState
                 } else {
-                    ScrollView {
-                        LazyVStack(spacing: 14) {
-                            ForEach(store.homes) { home in
-                                Button { router.push(.homeDetail(home.id)) } label: {
-                                    HomeRow(home: home)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.horizontal, 18)
-                        .padding(.top, 6)
-                        .padding(.bottom, 116)
-                    }
+                    homeList
                 }
             }
 
-            bottomBar
+            if !store.homes.isEmpty {
+                scanBar
+            }
         }
         .toolbar(.hidden, for: .navigationBar)
+        .renameAlert("Evi Yeniden Adlandır", placeholder: "Ev adı",
+                     isPresented: renamePresented, text: $renameText) {
+            if let target = renameTarget { store.renameHome(id: target.id, to: renameText) }
+            renameTarget = nil
+        }
+        .deleteHomeDialog("\u{201C}\(deleteTarget?.name ?? "")\u{201D} silinsin mi?",
+                          isPresented: deletePresented) {
+            if let target = deleteTarget { store.deleteHome(id: target.id) }
+            deleteTarget = nil
+        }
     }
+
+    // MARK: - Alert plumbing
+
+    private var renamePresented: Binding<Bool> {
+        Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })
+    }
+
+    private var deletePresented: Binding<Bool> {
+        Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } })
+    }
+
+    private func beginRename(_ home: HomeSummary) {
+        renameText = home.name
+        renameTarget = home
+    }
+
+    // MARK: - Pieces
 
     private var header: some View {
         HStack(alignment: .bottom) {
@@ -42,60 +65,110 @@ struct HomeListView: View {
                 Text("Evlerim").font(.display(34)).foregroundStyle(Brand.textPrimary)
             }
             Spacer()
-            Button { router.push(.scanHome) } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(Brand.bone100)
-                    .frame(width: 44, height: 44)
-                    .background(Brand.evergreen, in: Circle())
-            }
+            MakettoLogo(size: 40)
         }
         .padding(.horizontal, 22)
         .padding(.top, 6)
         .padding(.bottom, 14)
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 0) {
-            Spacer()
-            MakettoLogo(size: 52)
-            Text("Henüz ev yok")
-                .font(.display(33)).foregroundStyle(Brand.textPrimary).padding(.top, 22)
-            Text("Tüm evinizi yaklaşık birkaç dakikada tarayın. Maketto odalara böler.")
-                .font(.system(size: 16)).foregroundStyle(Brand.textSecondary)
-                .multilineTextAlignment(.center).padding(.horizontal, 48).padding(.top, 10)
-            Button { router.push(.scanHome) } label: {
-                Label("Evi Tara", systemImage: "viewfinder")
+    private var homeList: some View {
+        ScrollView {
+            // Cards are plain views with a tap gesture (not Buttons) so the
+            // ellipsis Menu inside each card stays independently tappable.
+            LazyVStack(spacing: 16) {
+                ForEach(store.homes) { home in
+                    HomeRow(home: home,
+                            onRename: { beginRename(home) },
+                            onDelete: { deleteTarget = home })
+                        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .onTapGesture { router.push(.homeDetail(home.id)) }
+                        .contextMenu {
+                            Button { beginRename(home) } label: {
+                                Label("Yeniden Adlandır", systemImage: "pencil")
+                            }
+                            Button(role: .destructive) { deleteTarget = home } label: {
+                                Label("Evi Sil", systemImage: "trash")
+                            }
+                        }
+                }
             }
-            .buttonStyle(ClayButtonStyle()).padding(.top, 28)
-            Overline("LiDAR · iPhone Pro", color: Brand.textFaint).padding(.top, 18)
-            Spacer(); Spacer()
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private var bottomBar: some View {
-        HStack(spacing: 0) {
-            tab("Evler", "house.fill", active: true) {}
-            tab("Tara", "viewfinder", active: false) { router.push(.scanHome) }
-            tab("Profil", "person", active: false) {}
-        }
-        .padding(.top, 12)
-        .padding(.bottom, 6)
-        .background(.ultraThinMaterial)
-        .overlay(Brand.hairline.frame(height: 0.5), alignment: .top)
-    }
-
-    private func tab(_ title: String, _ icon: String, active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: icon).font(.system(size: 21, weight: active ? .semibold : .regular))
-                Text(title).font(.system(size: 10, weight: active ? .bold : .medium))
-            }
-            .foregroundStyle(active ? Brand.evergreen : Brand.textFaint)
+            .padding(.horizontal, 18)
+            .padding(.top, 6)
+            .padding(.bottom, 128)
+            .frame(maxWidth: 560)            // single readable column on iPad
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.plain)
+        .scrollIndicators(.hidden)
+    }
+
+    private var emptyState: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                MakettoLogo(size: 56)
+                    .padding(.top, 48)
+                Text("Henüz ev yok")
+                    .font(.display(33)).foregroundStyle(Brand.textPrimary).padding(.top, 20)
+                Text("Evinizi birkaç dakikada tarayın; Maketto haritasını çıkarıp odalara bölsün.")
+                    .font(.system(size: 15.5)).foregroundStyle(Brand.textSecondary)
+                    .multilineTextAlignment(.center).padding(.horizontal, 44).padding(.top, 10)
+
+                VStack(alignment: .leading, spacing: 14) {
+                    step("figure.walk", "Telefonla evi oda oda dolaşın")
+                    step("square.split.bottomrightquarter", "Maketto planı odalara ayırır")
+                    step("pencil.and.ruler", "Haritayı düzenleyin, tasarlayın")
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Brand.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .strokeBorder(Brand.hairline, lineWidth: 1)
+                )
+                .frame(maxWidth: 480)
+                .padding(.horizontal, 34)
+                .padding(.top, 28)
+
+                Button { router.push(.scanHome) } label: {
+                    Label("Evi Tara", systemImage: "viewfinder")
+                }
+                .buttonStyle(ClayButtonStyle()).padding(.top, 28)
+                Overline("LiDAR · iPhone Pro", color: Brand.textFaint).padding(.top, 16)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private func step(_ icon: String, _ text: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Brand.evergreenAdaptive)
+                .frame(width: 34, height: 34)
+                .background(Brand.evergreenSoft.opacity(0.15), in: Circle())
+            Text(text)
+                .font(.system(size: 14.5, weight: .medium))
+                .foregroundStyle(Brand.textPrimary)
+        }
+    }
+
+    private var scanBar: some View {
+        Button { router.push(.scanHome) } label: {
+            Label("Evi Tara", systemImage: "viewfinder")
+        }
+        .buttonStyle(ClayButtonStyle())
+        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity)
+        .background(alignment: .bottom) {
+            LinearGradient(
+                colors: [Brand.surfaceAlt.opacity(0), Brand.surfaceAlt],
+                startPoint: .top, endPoint: .bottom
+            )
+            .frame(height: 130)
+            .ignoresSafeArea(edges: .bottom)
+            .allowsHitTesting(false)
+        }
     }
 }
 

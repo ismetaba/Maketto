@@ -46,6 +46,9 @@ enum Brand {
     static let mutedSoft      = Color(hex: 0x8C9083)
 
     // Semantic adaptive (light / dark)
+    /// Brand green for icons/marks drawn on surfaces: deep evergreen in light,
+    /// light sage in dark (raw evergreen is invisible on dark surfaces).
+    static let evergreenAdaptive = Color(light: evergreen, dark: Color(hex: 0xA8BFAB))
     static let surface        = Color(light: bone,            dark: inkDeep)
     static let surfaceAlt      = Color(light: bone100,         dark: Color(hex: 0x101A14))
     static let card           = Color(light: Color(hex: 0xFFFFFF), dark: Color(hex: 0x1B2620))
