@@ -176,4 +176,5 @@ struct HomeListView: View {
     NavigationStack { HomeListView() }
         .environment(RoomStore.preview)
         .environment(Router())
+        .environment(FurnitureLibrary(fileURL: nil))
 }

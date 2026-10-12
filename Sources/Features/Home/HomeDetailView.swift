@@ -304,3 +304,11 @@ struct HomeDetailView: View {
     }
 
 }
+
+#Preview {
+    let store = RoomStore.preview
+    return NavigationStack { HomeDetailView(homeID: store.homes.first?.id ?? UUID()) }
+        .environment(store)
+        .environment(Router())
+        .environment(FurnitureLibrary(fileURL: nil))
+}

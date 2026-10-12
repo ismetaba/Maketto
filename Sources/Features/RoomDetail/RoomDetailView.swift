@@ -774,3 +774,12 @@ struct RoomDetailView: View {
         share = ShareItem(urls: [url])
     }
 }
+
+#Preview {
+    let store = RoomStore.preview
+    let roomID = store.homes.first.flatMap { store.homeModel(for: $0.id)?.rooms.first?.id } ?? UUID()
+    return NavigationStack { RoomDetailView(roomID: roomID) }
+        .environment(store)
+        .environment(Router())
+        .environment(FurnitureLibrary(fileURL: nil))
+}
