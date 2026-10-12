@@ -25,7 +25,7 @@ struct WholeHomePlanView: View {
     var onSelect: ((UUID?) -> Void)?
 
     @State private var fallbackCamera = PlanCamera()
-    @GestureState private var pinch: CGFloat = 1
+    @GestureState private var pinch = PinchState()
     @GestureState private var dragLive: CGSize = .zero
     @Environment(\.colorScheme) private var colorScheme
 
@@ -47,15 +47,14 @@ struct WholeHomePlanView: View {
         } else if interactive {
             // Read the camera at BODY level so observation ties re-rendering to
             // it; the canvas then interpolates plain values.
-            let zoom = cam.zoom * pinch
-            let pan = CGSize(width: cam.pan.width + dragLive.width,
-                             height: cam.pan.height + dragLive.height)
+            let _ = (cam.zoom, cam.pan)   // track the camera at body level
             GeometryReader { geo in
-                AnimatedPlanCanvas(zoom: zoom, pan: pan) { context, size, z, p in
+                let live = cam.live(pinch: pinch, drag: dragLive, in: geo.size)
+                AnimatedPlanCanvas(zoom: live.zoom, pan: live.pan) { context, size, z, p in
                     draw(context, size: size, zoom: z, pan: p)
                 }
                 .contentShape(Rectangle())
-                .gesture(navigationGesture)
+                .gesture(navigationGesture(in: geo.size))
                 .simultaneousGesture(
                     SpatialTapGesture().onEnded { value in
                         selectRoom(at: value.location, in: geo.size)
@@ -70,10 +69,16 @@ struct WholeHomePlanView: View {
         }
     }
 
-    private var navigationGesture: some Gesture {
+    /// Pinch zoom anchored between the fingers + drag to pan.
+    private func navigationGesture(in size: CGSize) -> some Gesture {
         MagnifyGesture()
-            .updating($pinch) { value, state, _ in state = value.magnification }
-            .onEnded { value in cam.commitPinch(value.magnification) }
+            .updating($pinch) { value, state, _ in
+                state = PinchState(scale: value.magnification, anchor: value.startLocation)
+            }
+            .onEnded { value in
+                cam.commitPinch(PinchState(scale: value.magnification, anchor: value.startLocation),
+                                in: size)
+            }
             .simultaneously(with:
                 DragGesture()
                     .updating($dragLive) { value, state, _ in state = value.translation }

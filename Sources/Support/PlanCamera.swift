@@ -37,10 +37,29 @@ final class PlanCamera {
         zoom = z
     }
 
-    // MARK: - Gesture commits (anchor-free, matching the live gesture compose)
+    // MARK: - Gestures
 
-    func commitPinch(_ magnification: CGFloat) {
-        zoom = Self.clamped(zoom * magnification)
+    /// Live (zoom, pan) for an in-flight pinch + drag. The pinch zooms about
+    /// the point between the fingers (that world point stays under them):
+    /// with the composition law, a point at view position A is fixed iff
+    ///
+    ///     pan' = (A − c)·(1 − m) + pan·m      (m = zoom ratio, c = view centre)
+    ///
+    /// The drag translation is added on top, unscaled.
+    func live(pinch: PinchState, drag: CGSize, in size: CGSize) -> (zoom: CGFloat, pan: CGSize) {
+        let z = Self.clamped(zoom * pinch.scale)
+        let m = z / zoom
+        let ax = pinch.anchor.x - size.width / 2
+        let ay = pinch.anchor.y - size.height / 2
+        return (z, CGSize(width: ax * (1 - m) + pan.width * m + drag.width,
+                          height: ay * (1 - m) + pan.height * m + drag.height))
+    }
+
+    /// Commit a finished pinch (exactly what `live` showed, without the drag).
+    func commitPinch(_ pinch: PinchState, in size: CGSize) {
+        let result = live(pinch: pinch, drag: .zero, in: size)
+        zoom = result.zoom
+        pan = result.pan
     }
 
     func commitPan(_ translation: CGSize) {
@@ -48,9 +67,15 @@ final class PlanCamera {
         pan.height += translation.height
     }
 
-    private static func clamped(_ zoom: CGFloat) -> CGFloat {
+    static func clamped(_ zoom: CGFloat) -> CGFloat {
         min(max(zoom, minZoom), maxZoom)
     }
+}
+
+/// An in-flight pinch: magnification and where the fingers started (view pts).
+struct PinchState: Equatable, Sendable {
+    var scale: CGFloat = 1
+    var anchor: CGPoint = .zero
 }
 
 // MARK: - Camera composition

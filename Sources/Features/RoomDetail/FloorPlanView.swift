@@ -46,7 +46,7 @@ struct FloorPlanView: View {
     @State private var fallbackCamera = PlanCamera()
     @State private var localSelection: PlanSelection?
     @State private var drag: ActiveDrag?
-    @GestureState private var pinch: CGFloat = 1
+    @GestureState private var pinch = PinchState()
     @GestureState private var dragLive: CGSize = .zero
     @Environment(\.colorScheme) private var colorScheme
 
@@ -90,9 +90,6 @@ struct FloorPlanView: View {
         } else if interactive {
             // Read camera + live graph at BODY level so observation ties
             // re-rendering to both; the canvas closure captures plain values.
-            let zoom = cam.zoom * pinch
-            let pan = CGSize(width: cam.pan.width + dragLive.width,
-                             height: cam.pan.height + dragLive.height)
             let scene = PlanScene(
                 display: editing?.flattened() ?? room,
                 items: editing?.furniture ?? furniture,
@@ -101,8 +98,10 @@ struct FloorPlanView: View {
                 selection: currentSelection,
                 drag: drag?.kind
             )
+            let _ = (cam.zoom, cam.pan)   // track the camera at body level
             GeometryReader { geo in
-                AnimatedPlanCanvas(zoom: zoom, pan: pan) { context, size, z, p in
+                let live = cam.live(pinch: pinch, drag: dragLive, in: geo.size)
+                AnimatedPlanCanvas(zoom: live.zoom, pan: live.pan) { context, size, z, p in
                     draw(context, size: size, zoom: z, pan: p, scene: scene)
                 }
                 .contentShape(Rectangle())
@@ -150,17 +149,13 @@ struct FloorPlanView: View {
     private func activeGesture(in size: CGSize) -> AnyGesture<Void> {
         if let editing {
             return AnyGesture(
-                MagnifyGesture()
-                    .updating($pinch) { value, state, _ in state = value.magnification }
-                    .onEnded { value in cam.commitPinch(value.magnification) }
+                pinchGesture(in: size)
                     .simultaneously(with: editDragGesture(in: size, editing: editing))
                     .map { _ in () }
             )
         }
         return AnyGesture(
-            MagnifyGesture()
-                .updating($pinch) { value, state, _ in state = value.magnification }
-                .onEnded { value in cam.commitPinch(value.magnification) }
+            pinchGesture(in: size)
                 .simultaneously(with:
                     DragGesture()
                         .updating($dragLive) { value, state, _ in state = value.translation }
@@ -168,6 +163,18 @@ struct FloorPlanView: View {
                 )
                 .map { _ in () }
         )
+    }
+
+    /// Pinch zoom anchored between the fingers.
+    private func pinchGesture(in size: CGSize) -> some Gesture {
+        MagnifyGesture()
+            .updating($pinch) { value, state, _ in
+                state = PinchState(scale: value.magnification, anchor: value.startLocation)
+            }
+            .onEnded { value in
+                cam.commitPinch(PinchState(scale: value.magnification, anchor: value.startLocation),
+                                in: size)
+            }
     }
 
     private func editDragGesture(in size: CGSize, editing: EditableRoom) -> some Gesture {
@@ -261,10 +268,9 @@ struct FloorPlanView: View {
     // The fit frame always uses the immutable `room`, so the plan never re-centres
     // under the finger while live geometry is being edited.
     private func planTransform(in size: CGSize) -> PlanGeometry.Transform? {
-        PlanGeometry.fit(room, in: size, padding: 28, maxScale: 240, includeObjects: showScanObjects)
-            .map { $0.composed(in: size, zoom: cam.zoom * pinch,
-                               pan: CGSize(width: cam.pan.width + dragLive.width,
-                                           height: cam.pan.height + dragLive.height)) }
+        let live = cam.live(pinch: pinch, drag: dragLive, in: size)
+        return PlanGeometry.fit(room, in: size, padding: 28, maxScale: 240, includeObjects: showScanObjects)
+            .map { $0.composed(in: size, zoom: live.zoom, pan: live.pan) }
     }
 
     private func worldPoint(_ p: CGPoint, in size: CGSize) -> Point2D? {
@@ -347,9 +353,10 @@ struct FloorPlanView: View {
 
         var selectedFurniture: UUID?
         if case .furniture(let id) = scene.selection { selectedFurniture = id }
+        // Labels self-limit to pieces large enough on screen, so thumbnails
+        // stay clean while exports and the live plan are labelled.
         FloorPlanRenderer.drawFurniture(scene.items, into: context, t: t, dark: dark,
-                                        selectedID: selectedFurniture, selectionColor: cSel,
-                                        labels: interactive)
+                                        selectedID: selectedFurniture, selectionColor: cSel)
 
         drawGuides(context, size: size, guides: scene.guides, t: t)
 
