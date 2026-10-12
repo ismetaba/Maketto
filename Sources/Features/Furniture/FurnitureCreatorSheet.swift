@@ -16,6 +16,7 @@ struct FurnitureCreatorSheet: View {
     @State private var depthText = "90"
     @State private var heightText = "80"
     @State private var photoItem: PhotosPickerItem?
+    @State private var showPicker = false
     @State private var photo: UIImage?
     @State private var loadingPhoto = false
     @State private var saveFailed = false
@@ -33,7 +34,7 @@ struct FurnitureCreatorSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
+                    Button { showPicker = true } label: {
                         HStack(spacing: 14) {
                             ZStack {
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -61,6 +62,7 @@ struct FurnitureCreatorSheet: View {
                             }
                         }
                     }
+                    .buttonStyle(.plain)
                     if photo != nil {
                         Button("Fotoğrafı kaldır", role: .destructive) {
                             photo = nil
@@ -112,6 +114,8 @@ struct FurnitureCreatorSheet: View {
                         .disabled(!isValid || loadingPhoto)
                 }
             }
+            .photosPicker(isPresented: $showPicker, selection: $photoItem, matching: .images,
+                          photoLibrary: .shared())
             .onChange(of: photoItem) { _, item in loadPhoto(item) }
             .alert("Eşya kaydedilemedi", isPresented: $saveFailed) {
                 Button("Tamam", role: .cancel) {}

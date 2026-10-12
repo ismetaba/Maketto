@@ -1,6 +1,6 @@
 # iOS Ev Tasarım Uygulaması — Plan
 
-> Durum: **plan aşaması, henüz kod yok.** Xcode evde kurulacak. Cihaz: iPhone 14 Pro Max (LiDAR ✅).
+> Durum: **F0–F6 ve F8 tamamlandı** (bkz. README). F7 (yapay zekâ render) bir API anahtarı ve sunucu tarafı vekil gerektirdiği için ertelendi. Cihaz: iPhone 14 Pro Max (LiDAR ✅).
 
 ## Vizyon / akış
 Evi RoomPlan ile tara → 2D tepeden ölçülü plan → kullanıcı düzeltir → istediği yere ölçülü eşya (örn. L koltuk, fotoğraflı) koyar → native 3D ve/veya Gemini render → odaların versiyonları (her versiyon tam snapshot).
@@ -24,17 +24,17 @@ SwiftUI · RoomPlan · RealityKit/SceneKit · SwiftData (+ sonra CloudKit) · Ge
 
 ## Özellikler (bağımsız modüller)
 
-| # | Özellik | Framework | Doğrulama yeri | Ön koşul |
-|---|---------|-----------|----------------|----------|
-| F0 | Veri modeli + app iskeleti (ev/oda listesi) | SwiftData+SwiftUI | Simülatör | Xcode |
-| F1 | **RoomPlan tarama → RoomModel** | RoomPlan | Gerçek cihaz | Xcode + cihaz |
-| F2 | 2D tepeden plan çizimi | SwiftUI Canvas | Simülatör (mock) | Xcode |
-| F3 | Plan düzeltme (uzunluk, köşe, snap) | SwiftUI Canvas | Simülatör | Xcode |
-| F4 | Eşya yerleştirme (2D, ölçekli, döndür) | SwiftUI/SpriteKit | Simülatör | Xcode |
-| F5 | Eşya kataloğu (boyut + fotoğraf) | SwiftData+PhotosUI | Simülatör | Xcode |
-| F6 | Native 3D görünüm | RealityKit/SceneKit | Simülatör/cihaz | Xcode |
-| F7 | Gemini render | Gemini API | Script/app | API key — ertelendi |
-| F8 | Versiyonlama (snapshot/seç/kaydet) | SwiftData | Simülatör | Xcode |
+| # | Özellik | Framework | Doğrulama yeri | Durum |
+|---|---------|-----------|----------------|-------|
+| F0 | Veri modeli + app iskeleti (ev/oda listesi) | SwiftData+SwiftUI | Simülatör | ✅ |
+| F1 | **RoomPlan tarama → RoomModel** (tüm ev, odalara bölme) | RoomPlan | Gerçek cihaz | ✅ |
+| F2 | 2D tepeden plan çizimi | SwiftUI Canvas | Simülatör (mock) | ✅ |
+| F3 | Plan düzeltme (uzunluk, köşe, snap, duvar çiz/sil) | SwiftUI Canvas | Simülatör | ✅ |
+| F4 | Eşya yerleştirme (2D, ölçekli, döndür, duvara yasla) | SwiftUI Canvas | Simülatör | ✅ |
+| F5 | Eşya kataloğu (boyut + fotoğraf) | JSON dosyası + PhotosUI | Simülatör | ✅ |
+| F6 | Native 3D görünüm | SceneKit | Simülatör/cihaz | ✅ |
+| F7 | Gemini render | Gemini API | Script/app | ⏸ API anahtarı + vekil sunucu gerekli |
+| F8 | Versiyonlama (snapshot/geri dön/adlandır/sil) | SwiftData | Simülatör | ✅ |
 
 **Entegrasyon sırası:** F0 → F1 → F2 → F3 → F4 → F5 → F8 → F6 → (F7 en son)
 
@@ -55,7 +55,7 @@ Ev (Home)
      └─ activeVersionId
 Version = { id, ad, oluşturulma, roomModel, placedFurniture[], generatedImages[] }
 ```
-**Açık karar:** "yeni versiyon ekleyince oda sıfırlanır" → (a) snapshot al + editör boş başlar, mı (b) kopyadan devam mı? Şimdilik (a) snapshot tabanlı varsayılıyor. Kodlamadan önce netleştirilecek.
+**Karar:** (b) — düzenleyici güncel sürümün kopyasıyla açılır, "Kaydet" yeni bir tam anlık görüntü (sürüm) oluşturur. Eski bir sürüme dönmek yalnızca güncel işaretçiyi taşır; hiçbir sürüm silinmez.
 
 ## "Eve gidince" hazırlık
 - [ ] Xcode (App Store, tam sürüm, ~10+ GB)

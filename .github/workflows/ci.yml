@@ -45,11 +45,24 @@ jobs:
             -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO -quiet
 
+      # Running needs a booted simulator; one OS is enough for behaviour, so the
+      # newer image only proves the tests COMPILE with its toolchain.
       - name: Unit tests (simulator)
+        if: matrix.os == 'macos-15'
+        timeout-minutes: 25
         run: |
           set -o pipefail
           UDID=$(python3 scripts/pick-simulator.py)
           xcodebuild test \
             -project Maketto.xcodeproj -scheme Maketto -configuration Debug \
             -destination "id=$UDID" \
+            CODE_SIGNING_ALLOWED=NO -quiet
+
+      - name: Build tests (simulator)
+        if: matrix.os != 'macos-15'
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing \
+            -project Maketto.xcodeproj -scheme Maketto -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO -quiet
