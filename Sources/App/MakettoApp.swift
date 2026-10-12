@@ -8,6 +8,8 @@ struct MakettoApp: App {
     @State private var roomStore: RoomStore
     @State private var furnitureLibrary = FurnitureLibrary()
     @State private var showStoreAlert: Bool
+    /// False when running on the temporary fallback store.
+    private let storeIsPersistent: Bool
 
     init() {
         let schema = Schema(versionedSchema: SchemaV1.self)
@@ -28,6 +30,7 @@ struct MakettoApp: App {
         // Shown once when the on-disk store could not be opened and the app runs
         // on a temporary in-memory store instead (the file is left untouched).
         _showStoreAlert = State(initialValue: failed)
+        storeIsPersistent = !failed
         _roomStore = State(initialValue: RoomStore(modelContext: container.mainContext))
     }
 
@@ -38,6 +41,13 @@ struct MakettoApp: App {
                 .environment(roomStore)
                 .environment(furnitureLibrary)
                 .tint(Brand.clay)
+                .task {
+                    // Sweep furniture photos nothing shows any more. Never on
+                    // the fallback store, which would see no references.
+                    guard storeIsPersistent else { return }
+                    FurniturePhotoStore.removeUnreferenced(
+                        keeping: roomStore.referencedPhotoIDs().union(furnitureLibrary.photoIDs))
+                }
                 .alert("Kayıtlı evler açılamadı", isPresented: $showStoreAlert) {
                     Button("Tamam", role: .cancel) {}
                 } message: {

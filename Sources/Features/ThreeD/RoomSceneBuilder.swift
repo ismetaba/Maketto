@@ -60,11 +60,14 @@ enum RoomSceneBuilder {
             if let node = floorNode(poly, color: color) { root.addChildNode(node) }
         }
 
-        // Walls — each physical wall once (shared walls appear in two rooms).
-        let walls = PlanGeometry.deduped(rooms.flatMap(\.walls))
-        let openings = PlanGeometry.deduped(rooms.flatMap(\.openings))
+        // Walls — each physical wall once (shared walls appear in two rooms),
+        // cut by the openings hosted on that very copy.
+        let hosted = PlanGeometry.hostedOpenings(rooms)
         let wallGroup = SCNNode()
-        for wall in walls {
+        for wall in PlanGeometry.mergedWalls(rooms) {
+            let openings = hosted
+                .filter { $0.opening.onWallId == wall.id && PlanGeometry.sameSegment($0.wall, wall) }
+                .map(\.opening)
             addWall(wall, openings: openings, palette: palette, to: wallGroup)
         }
         root.addChildNode(wallGroup)

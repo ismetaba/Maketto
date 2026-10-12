@@ -10,7 +10,6 @@ struct FurnitureCatalogSheet: View {
     let onImportScanned: () -> Void
 
     @Environment(FurnitureLibrary.self) private var library
-    @Environment(RoomStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var showCreator = false
@@ -70,10 +69,10 @@ struct FurnitureCatalogSheet: View {
         Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } })
     }
 
+    /// The photo file stays: pieces already placed (saved or still being
+    /// edited) keep showing it. Orphaned photos are swept at next launch.
     private func delete(_ template: FurnitureTemplate) {
-        guard let photoID = library.delete(id: template.id) else { return }
-        // Keep the photo while any saved plan still shows it.
-        if !store.isPhotoReferenced(photoID) { FurniturePhotoStore.delete(photoID) }
+        library.delete(id: template.id)
     }
 
     // MARK: - Filtering

@@ -221,14 +221,33 @@ final class EditableRoom {
 
     /// Commit a corner move: weld onto another corner dropped within
     /// `weldRadius`, then push ONE undo step (none for a no-op drag).
+    ///
+    /// The corner's own wall neighbours only weld when dropped right on them
+    /// (within `weld`), and corners that were already close before the drag
+    /// never weld — so nudging the end of a short wall can't collapse it.
     func endCornerDrag(_ id: UUID, weldRadius: Double? = nil) {
         snapGuides = .none
         guard let reference = dragBaseline else { return }
         dragBaseline = nil
-        if let c = corners[id],
-           let other = corner(near: c.p, within: max(weldRadius ?? 0, weld), excluding: id) {
-            mergeCorner(id, into: other)
-            reanchorOpenings(touching: [other], reference: reference)
+        if let c = corners[id] {
+            let radius = max(weldRadius ?? 0, weld)
+            let start = reference.corners[id]?.p
+            let neighbours = Set(neighbors(of: id))
+            var best: (UUID, Double)?
+            for (other, corner) in corners where other != id {
+                let d = corner.p.distance(to: c.p)
+                let limit = neighbours.contains(other) ? weld : radius
+                guard d <= limit else { continue }
+                if !neighbours.contains(other), let start,
+                   let was = reference.corners[other]?.p, was.distance(to: start) <= radius {
+                    continue
+                }
+                if best.map({ d < $0.1 }) ?? true { best = (other, d) }
+            }
+            if let other = best?.0 {
+                mergeCorner(id, into: other)
+                reanchorOpenings(touching: [other], reference: reference)
+            }
         }
         if snapshot() != reference { commit(reference) }
     }
@@ -328,15 +347,24 @@ final class EditableRoom {
         let e = edges[i]
         let length = pa.distance(to: pb)
         let point = FloorGeometry.closestPoint(on: pa, pb, to: p)
-        let along = point.distance(to: pa)
-        guard length > 0.1, along > 0.05, length - along > 0.05 else { return nil }
+        guard length > 0.1 else { return nil }
+
+        // Never split through a door or window: move the split to the
+        // opening's nearer edge so the opening stays whole on one half.
+        var along = point.distance(to: pa)
+        for o in openings where o.onWallId == e.id {
+            let lo = o.offset - o.width / 2, hi = o.offset + o.width / 2
+            if along > lo, along < hi { along = (along - lo < hi - along) ? lo : hi }
+        }
+        guard along > 0.05, length - along > 0.05 else { return nil }
+        let splitPoint = pa + (pb - pa) * (along / length)
 
         let mid = UUID()
-        corners[mid] = Corner(id: mid, p: point)
+        corners[mid] = Corner(id: mid, p: splitPoint)
         let second = Edge(id: UUID(), a: mid, b: e.b, thickness: e.thickness, height: e.height)
         edges[i].b = mid
         edges.insert(second, at: i + 1)
-        for k in openings.indices where openings[k].onWallId == e.id && openings[k].offset > along {
+        for k in openings.indices where openings[k].onWallId == e.id && openings[k].offset >= along {
             openings[k].onWallId = second.id
             openings[k].offset -= along
         }
@@ -447,12 +475,14 @@ final class EditableRoom {
 
     func undo() {
         guard let s = undoStack.popLast() else { return }
+        dragBaseline = nil
         redoStack.append(snapshot())
         apply(s)
     }
 
     func redo() {
         guard let s = redoStack.popLast() else { return }
+        dragBaseline = nil
         undoStack.append(snapshot())
         apply(s)
     }
@@ -461,7 +491,11 @@ final class EditableRoom {
         Snapshot(corners: corners, edges: edges, openings: openings, furniture: furniture)
     }
 
+    /// Push one undo step. Any drag still pending (its gesture was abandoned
+    /// without ending) is finished here, so a later cancel can never roll
+    /// back this newer edit.
     private func commit(_ before: Snapshot) {
+        dragBaseline = nil
         undoStack.append(before)
         if undoStack.count > 200 { undoStack.removeFirst() }
         redoStack.removeAll()

@@ -204,8 +204,7 @@ enum PlanGeometry {
         return openingSegment(opening, on: wall, interiorReference: centroid)
     }
 
-    /// De-duplicate identifiable items by id (shared walls/openings appear in two
-    /// rooms with the same RoomPlan identifier; draw each once to avoid doubling).
+    /// De-duplicate identifiable items by id.
     static func deduped<T: Identifiable>(_ items: [T]) -> [T] where T.ID == UUID {
         var seen = Set<UUID>()
         var out: [T] = []
@@ -214,11 +213,78 @@ enum PlanGeometry {
         return out
     }
 
+    /// Same physical segment (either direction) within `tolerance` meters.
+    static func sameSegment(_ a: Wall, _ b: Wall, tolerance: Double = 0.02) -> Bool {
+        (a.start.distance(to: b.start) <= tolerance && a.end.distance(to: b.end) <= tolerance)
+            || (a.start.distance(to: b.end) <= tolerance && a.end.distance(to: b.start) <= tolerance)
+    }
+
+    /// The walls of several rooms with each physical wall drawn once. A wall
+    /// shared by two rooms is listed in both with the same RoomPlan id; copies
+    /// that still coincide merge, but a copy edited in one room (moved, so
+    /// its geometry diverged) is kept, so every room's current walls show.
+    static func mergedWalls(_ rooms: [RoomModel], tolerance: Double = 0.02) -> [Wall] {
+        var byID: [UUID: [Wall]] = [:]
+        var out: [Wall] = []
+        for wall in rooms.flatMap(\.walls) {
+            if byID[wall.id]?.contains(where: { sameSegment($0, wall, tolerance: tolerance) }) == true {
+                continue
+            }
+            byID[wall.id, default: []].append(wall)
+            out.append(wall)
+        }
+        return out
+    }
+
+    /// An opening together with the wall that hosts it.
+    struct HostedOpening {
+        var opening: Opening
+        var wall: Wall
+    }
+
+    /// Openings of one room resolved against that room's own walls.
+    static func hostedOpenings(_ room: RoomModel) -> [HostedOpening] {
+        room.openings.compactMap { o in room.wall(o.onWallId).map { HostedOpening(opening: o, wall: $0) } }
+    }
+
+    /// Openings of several rooms, each resolved against its OWN room's wall,
+    /// with copies on a shared (still coinciding) wall drawn once.
+    static func hostedOpenings(_ rooms: [RoomModel], tolerance: Double = 0.02) -> [HostedOpening] {
+        var out: [HostedOpening] = []
+        for room in rooms {
+            for hosted in hostedOpenings(room) where !out.contains(where: {
+                $0.opening.id == hosted.opening.id && sameSegment($0.wall, hosted.wall, tolerance: tolerance)
+            }) {
+                out.append(hosted)
+            }
+        }
+        return out
+    }
+
     /// Angular distance of a wall from the nearest axis (0/90°), radians in [0, π/4].
     static func offAxis(_ wall: Wall) -> Double {
         let a = atan2(wall.direction.z, wall.direction.x)
         let m = abs(a.truncatingRemainder(dividingBy: .pi / 2))
         return min(m, .pi / 2 - m)
+    }
+
+    /// Scan clean-up on a STRAIGHTENED home: drop RoomPlan's stray diagonal
+    /// slivers (see `dropOffAxisOutliers`) from every room, with the openings
+    /// on them; rooms left without walls are removed. Run once at scan time —
+    /// never at render time, where it would hide walls the user drew.
+    static func removingOffAxisOutliers(_ rooms: [RoomModel]) -> [RoomModel] {
+        let all = rooms.flatMap(\.walls)
+        let kept = Set(dropOffAxisOutliers(all).map(\.id))
+        guard kept.count < Set(all.map(\.id)).count else { return rooms }
+        return rooms.compactMap { room in
+            var out = room
+            out.walls = room.walls.filter { kept.contains($0.id) }
+            guard !out.walls.isEmpty else { return nil }
+            guard out.walls.count != room.walls.count else { return room }
+            out.openings = room.openings.filter { kept.contains($0.onWallId) }
+            out.floorOutline = FloorGeometry.outline(fromWalls: out.walls) ?? room.floorOutline
+            return out
+        }
     }
 
     /// In a DOMINANTLY rectilinear home (≥80% of wall length near-axis), drop the

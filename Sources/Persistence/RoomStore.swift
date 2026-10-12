@@ -137,12 +137,10 @@ final class RoomStore {
         return Array(infos.reversed())
     }
 
-    /// True when any saved version still shows a piece with this photo.
-    func isPhotoReferenced(_ photoID: String) -> Bool {
+    /// Every furniture photo any saved version still shows.
+    func referencedPhotoIDs() -> Set<String> {
         let versions = (try? modelContext.fetch(FetchDescriptor<Version>())) ?? []
-        return versions.contains { v in
-            snapshot(of: v)?.furniture.contains { $0.photoID == photoID } ?? false
-        }
+        return Set(versions.flatMap { snapshot(of: $0)?.furniture.compactMap(\.photoID) ?? [] })
     }
 
     // MARK: - Lookup helpers

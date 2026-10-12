@@ -143,6 +143,50 @@ struct EditableRoomTests {
         #expect(!ed.canUndo)
     }
 
+    @Test func nudgingAShortWallNeverCollapsesIt() throws {
+        // A 4×3 room with a 15 cm return notch on the top wall.
+        let p = [Point2D(x: 0, z: 0), Point2D(x: 2, z: 0), Point2D(x: 2, z: 0.15),
+                 Point2D(x: 4, z: 0.15), Point2D(x: 4, z: 3), Point2D(x: 0, z: 3)]
+        let walls = p.indices.map { Wall(start: p[$0], end: p[($0 + 1) % p.count]) }
+        let ed = EditableRoom(RoomModel(name: "n", walls: walls, source: .manual))
+        let c = try cornerID(ed, 2, 0.15)
+        ed.beginCornerDrag()
+        ed.dragCorner(c, to: Point2D(x: 2.02, z: 0.15))
+        ed.endCornerDrag(c, weldRadius: 0.2)          // a generous on-screen radius
+        #expect(ed.corners.count == 6)
+        #expect(ed.edges.count == 6)
+    }
+
+    @Test func aStaleDragCannotRollBackALaterEdit() throws {
+        let ed = EditableRoom(.mock)
+        let c = try cornerID(ed, 4, 3)
+        ed.beginCornerDrag()
+        ed.dragCorner(c, to: Point2D(x: 4.5, z: 3.5))
+        // The gesture is abandoned (no endCornerDrag); the user adds a piece.
+        let item = PlacedFurniture(name: "x", center: Point2D(x: 1, z: 1), width: 1, depth: 1)
+        ed.addFurniture(item)
+        ed.cancelDrag()                                // next touch tidies up
+        #expect(ed.furnitureItem(item.id) != nil)
+        #expect(ed.cornerPosition(c) == Point2D(x: 4.5, z: 3.5))
+    }
+
+    @Test func splittingNeverCutsThroughADoor() throws {
+        var room = RoomModel.mock
+        let bottom = room.walls[0]                     // (0,0) → (4,0)
+        let door = Opening(type: .door, onWallId: bottom.id, offset: 2, width: 0.9, height: 2)
+        room.openings = [door]
+        let ed = EditableRoom(room)
+        _ = ed.addWall(from: Point2D(x: 2.2, z: 0), to: Point2D(x: 2.2, z: 1.5), snapRadius: 0.05)
+        let flat = ed.flattened()
+        let moved = try #require(flat.openings.first { $0.id == door.id })
+        let host = try #require(flat.wall(moved.onWallId))
+        #expect(abs(moved.width - 0.9) < 1e-12)
+        #expect(moved.offset - moved.width / 2 >= -1e-9)
+        #expect(moved.offset + moved.width / 2 <= host.length + 1e-9)   // fully on its half
+        #expect(host.point(atOffset: moved.offset).distance(to: Point2D(x: 2, z: 0)) < 1e-9)
+        #expect(ed.cornerPosition(try cornerID(ed, 2.45, 0)) != nil)    // split moved to the edge
+    }
+
     @Test func furnitureLifecycle() throws {
         let ed = EditableRoom(.mock)
         let sofa = FurnitureCatalog.presets.first { $0.id == "sofa.3" }!

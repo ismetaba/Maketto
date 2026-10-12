@@ -162,6 +162,53 @@ struct PlanGeometryTests {
     }
 }
 
+struct WholeHomeMergeTests {
+    /// Two rooms sharing the wall x = 4 (same RoomPlan id in both).
+    private func twoRooms() -> (RoomModel, RoomModel, Wall) {
+        let shared = Wall(start: Point2D(x: 4, z: 0), end: Point2D(x: 4, z: 3))
+        var a = RoomModel.mock
+        a.walls[1] = shared
+        var b = HomeGeometry.transform(.mock, by: Pose2D(translation: Point2D(x: 4, z: 0)))
+        b.walls[3] = Wall(id: shared.id, start: shared.end, end: shared.start)   // reversed copy
+        b.openings = [Opening(type: .door, onWallId: shared.id, offset: 1, width: 0.8, height: 2)]
+        a.openings = [Opening(id: b.openings[0].id, type: .door, onWallId: shared.id,
+                              offset: 2, width: 0.8, height: 2)]
+        return (a, b, shared)
+    }
+
+    @Test func coincidingSharedWallsDrawOnce() {
+        let (a, b, shared) = twoRooms()
+        let merged = PlanGeometry.mergedWalls([a, b])
+        #expect(merged.count == 7)
+        #expect(merged.filter { $0.id == shared.id }.count == 1)
+        #expect(PlanGeometry.hostedOpenings([a, b]).count == 1)
+    }
+
+    @Test func anEditedSharedWallStaysVisible() {
+        var (a, b, shared) = twoRooms()
+        b.walls[3].start = Point2D(x: 4.5, z: 3)        // moved in room B only
+        b.walls[3].end = Point2D(x: 4.5, z: 0)
+        let merged = PlanGeometry.mergedWalls([a, b])
+        #expect(merged.filter { $0.id == shared.id }.count == 2)
+        // Each copy keeps the door hosted on it.
+        #expect(PlanGeometry.hostedOpenings([a, b]).count == 2)
+    }
+
+    @Test func scanCleanupDropsStraySliversOnly() {
+        var room = RoomModel(name: "big", walls: rectangleWalls(6, 5), source: .roomplan)
+        room.walls += [Wall(start: Point2D(x: 1, z: 1), end: Point2D(x: 1.5, z: 1.4)),     // sliver
+                       Wall(start: Point2D(x: 3, z: 0), end: Point2D(x: 3, z: 5))]         // partition
+        let cleaned = PlanGeometry.removingOffAxisOutliers([room])
+        #expect(cleaned[0].walls.count == 5)
+        // A genuinely angled home is untouched.
+        let angled = HomeGeometry.transform(.mock, by: Pose2D(rotation: .pi / 4))
+        var mixed = RoomModel(name: "m", walls: rectangleWalls(2, 2) + angled.walls + [
+            Wall(start: Point2D(x: 9, z: 0), end: Point2D(x: 9, z: 1))], source: .roomplan)
+        mixed.kind = nil
+        #expect(PlanGeometry.removingOffAxisOutliers([mixed])[0].walls.count == mixed.walls.count)
+    }
+}
+
 struct RoomNamingTests {
     @Test func duplicatesAreNumberedLargestFirst() {
         var big = RoomModel.mockLShaped; big.kind = .bedroom

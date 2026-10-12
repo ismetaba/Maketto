@@ -47,8 +47,11 @@ final class FurnitureLibrary {
         return template
     }
 
-    /// Remove a custom piece. Returns its photo id so the caller can delete
-    /// the file once nothing else shows it.
+    /// Photos the catalog itself still uses.
+    var photoIDs: Set<String> { Set(custom.compactMap(\.photoID)) }
+
+    /// Remove a custom piece. Returns its photo id (the file is left for the
+    /// launch-time sweep, since placed pieces may still show it).
     @discardableResult
     func delete(id: String) -> String? {
         guard let index = custom.firstIndex(where: { $0.id == id }) else { return nil }
@@ -117,6 +120,15 @@ enum FurniturePhotoStore {
     static func delete(_ id: String) {
         cache.removeObject(forKey: id as NSString)
         try? FileManager.default.removeItem(at: url(for: id))
+    }
+
+    /// Delete every stored photo not in `keeping`. Only call when no editor
+    /// session can hold unsaved references (i.e. at launch).
+    static func removeUnreferenced(keeping: Set<String>) {
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.path(percentEncoded: false))) ?? []
+        for name in files where name.hasSuffix(".jpg") && !keeping.contains(name) {
+            delete(name)
+        }
     }
 
     private static func downscaled(_ image: UIImage, maxSide: CGFloat) -> UIImage {

@@ -17,7 +17,7 @@ enum FloorPlanRenderer {
     static func drawRoom(_ room: RoomModel, into context: GraphicsContext,
                          t: PlanGeometry.Transform, ink: PlanInk, showScanObjects: Bool) {
         drawFloor(room, into: context, t: t, floor: ink.floor)
-        drawStructure(walls: room.walls, openings: room.openings,
+        drawStructure(walls: room.walls, openings: PlanGeometry.hostedOpenings(room),
                       centroid: PlanGeometry.centroid(room), objects: room.detectedObjects,
                       into: context, t: t, ink: ink, showScanObjects: showScanObjects)
     }
@@ -35,7 +35,7 @@ enum FloorPlanRenderer {
     /// Walls + openings (+ RoomPlan's detected objects as dashed ghosts) from
     /// explicit lists. The whole-home plan passes a de-duplicated union so
     /// shared walls draw exactly once.
-    static func drawStructure(walls: [Wall], openings: [Opening], centroid: Point2D,
+    static func drawStructure(walls: [Wall], openings: [PlanGeometry.HostedOpening], centroid: Point2D,
                               objects: [DetectedObject], into context: GraphicsContext,
                               t: PlanGeometry.Transform, ink: PlanInk, showScanObjects: Bool) {
         if showScanObjects {
@@ -49,10 +49,9 @@ enum FloorPlanRenderer {
             context.stroke(p, with: .color(ink.wall),
                            style: StrokeStyle(lineWidth: wpt, lineCap: .square, lineJoin: .miter))
         }
-        for opening in openings {
-            guard let seg = PlanGeometry.openingSegment(opening, walls: walls, interiorReference: centroid)
-            else { continue }
-            drawOpening(context, opening: opening, seg: seg, t: t, ink: ink)
+        for hosted in openings {
+            let seg = PlanGeometry.openingSegment(hosted.opening, on: hosted.wall, interiorReference: centroid)
+            drawOpening(context, opening: hosted.opening, seg: seg, t: t, ink: ink)
         }
     }
 

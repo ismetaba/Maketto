@@ -91,7 +91,10 @@ final class HomeScanner {
         // Safety net: never leave the user on an endless spinner.
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(45))
-            guard let self, self.generation == expected, case .processing = self.state else { return }
+            // Only the wait for RoomPlan's callback can time out; once the
+            // capture is consumed the room is being built and will land.
+            guard let self, self.generation == expected, !self.didConsumeCapture,
+                  case .processing = self.state else { return }
             self.didConsumeCapture = true
             self.state = .failed("Tarama işlenirken zaman aşımı oluştu. Lütfen tekrar deneyin.")
         }
@@ -125,7 +128,8 @@ final class HomeScanner {
             do {
                 let captured = try await RoomBuilder(options: [.beautifyObjects]).capturedRoom(from: data)
                 guard generation == self.generation else { return }
-                let rooms = HomeGeometry.straightened(RoomModelConverter.splitRooms(from: captured))
+                let rooms = PlanGeometry.removingOffAxisOutliers(
+                    HomeGeometry.straightened(RoomModelConverter.splitRooms(from: captured)))
                 guard rooms.contains(where: { !$0.walls.isEmpty }) else {
                     state = .failed("Hiç duvar algılanamadı. Telefonu yavaşça gezdirip her duvarı kameraya gösterin.")
                     return

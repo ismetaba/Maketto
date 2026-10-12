@@ -46,6 +46,9 @@ struct FloorPlanView: View {
     @State private var fallbackCamera = PlanCamera()
     @State private var localSelection: PlanSelection?
     @State private var drag: ActiveDrag?
+    /// Live translation of an edit-mode pan (committed on release, like the
+    /// read-mode pan, so it composes correctly with a simultaneous pinch).
+    @State private var editPan: CGSize = .zero
     @GestureState private var pinch = PinchState()
     @GestureState private var dragLive: CGSize = .zero
     @Environment(\.colorScheme) private var colorScheme
@@ -59,11 +62,16 @@ struct FloorPlanView: View {
             case corner(id: UUID, grab: Point2D)       // grab = corner − finger
             case furniture(id: UUID, grab: Point2D)
             case drawing(start: Point2D, end: Point2D)
-            case pan(base: CGSize)
+            /// `origin` = translation when panning began (a drag can turn
+            /// into a pan mid-gesture when a pinch starts).
+            case pan(origin: CGSize)
         }
     }
 
     private var cam: PlanCamera { camera ?? fallbackCamera }
+    private var liveTranslation: CGSize {
+        CGSize(width: dragLive.width + editPan.width, height: dragLive.height + editPan.height)
+    }
     private var dark: Bool { colorScheme == .dark }
     private var currentSelection: PlanSelection? { selection?.wrappedValue ?? localSelection }
 
@@ -100,7 +108,7 @@ struct FloorPlanView: View {
             )
             let _ = (cam.zoom, cam.pan)   // track the camera at body level
             GeometryReader { geo in
-                let live = cam.live(pinch: pinch, drag: dragLive, in: geo.size)
+                let live = cam.live(pinch: pinch, drag: liveTranslation, in: geo.size)
                 AnimatedPlanCanvas(zoom: live.zoom, pan: live.pan) { context, size, z, p in
                     draw(context, size: size, zoom: z, pan: p, scene: scene)
                 }
@@ -185,6 +193,20 @@ struct FloorPlanView: View {
                     drag = ActiveDrag(start: value.startLocation,
                                       kind: beginDrag(at: value.startLocation, in: size, editing: editing))
                 }
+                // A second finger turned this into a pinch: never let it also
+                // drag the corner / piece / wall the first finger landed on.
+                if pinch.scale != 1, let current = drag {
+                    switch current.kind {
+                    case .corner, .furniture:
+                        editing.cancelDrag()
+                        drag?.kind = .pan(origin: value.translation)
+                    case .drawing:
+                        editing.setGuides(.none)
+                        drag?.kind = .pan(origin: value.translation)
+                    case .pan:
+                        break
+                    }
+                }
                 guard let current = drag, let w = worldPoint(value.location, in: size) else { return }
                 switch current.kind {
                 case .corner(let id, let grab):
@@ -196,9 +218,9 @@ struct FloorPlanView: View {
                                                         extraAnchors: [start])
                     editing.setGuides(guides)
                     drag?.kind = .drawing(start: start, end: end)
-                case .pan(let base):
-                    cam.pan = CGSize(width: base.width + value.translation.width,
-                                     height: base.height + value.translation.height)
+                case .pan(let origin):
+                    editPan = CGSize(width: value.translation.width - origin.width,
+                                     height: value.translation.height - origin.height)
                 }
             }
             .onEnded { value in
@@ -215,32 +237,39 @@ struct FloorPlanView: View {
                         select(.wall(id))
                         Haptics.success()
                     }
-                case .pan(let base):
-                    cam.pan = CGSize(width: base.width + value.translation.width,
-                                     height: base.height + value.translation.height)
+                case .pan(let origin):
+                    editPan = .zero
+                    cam.commitPan(CGSize(width: value.translation.width - origin.width,
+                                         height: value.translation.height - origin.height))
                 }
             }
     }
 
     /// Decide once per gesture what a drag does.
     private func beginDrag(at start: CGPoint, in size: CGSize, editing: EditableRoom) -> ActiveDrag.Kind {
-        guard let w = worldPoint(start, in: size) else { return .pan(base: cam.pan) }
+        guard let w = worldPoint(start, in: size) else { return .pan(origin: .zero) }
         switch editTool {
         case .select:
-            if let cid = editing.corner(near: w, within: worldRadius(26, in: size)),
-               let p = editing.cornerPosition(cid) {
+            // Priority: a corner handle right under the finger, then a piece
+            // the finger is inside, then a nearby corner, then a piece's edge.
+            // (A small piece snapped into a room corner stays grabbable.)
+            func grabCorner(_ radius: CGFloat) -> ActiveDrag.Kind? {
+                guard let cid = editing.corner(near: w, within: worldRadius(radius, in: size)),
+                      let p = editing.cornerPosition(cid) else { return nil }
                 editing.beginCornerDrag()
                 Haptics.light()
                 return .corner(id: cid, grab: p - w)
             }
-            if let fid = editing.furnitureID(at: w, slop: worldRadius(6, in: size)),
-               let item = editing.furnitureItem(fid) {
+            func grabFurniture(slop: CGFloat) -> ActiveDrag.Kind? {
+                guard let fid = editing.furnitureID(at: w, slop: worldRadius(slop, in: size)),
+                      let item = editing.furnitureItem(fid) else { return nil }
                 editing.beginFurnitureDrag()
                 select(.furniture(fid))
                 Haptics.light()
                 return .furniture(id: fid, grab: item.center - w)
             }
-            return .pan(base: cam.pan)
+            return grabCorner(12) ?? grabFurniture(slop: 0) ?? grabCorner(26)
+                ?? grabFurniture(slop: 6) ?? .pan(origin: .zero)
         case .draw:
             let anchor = editing.corner(near: w, within: worldRadius(22, in: size))
                 .flatMap { editing.cornerPosition($0) }
@@ -248,7 +277,7 @@ struct FloorPlanView: View {
             Haptics.light()
             return .drawing(start: start, end: start)
         case .erase:
-            return .pan(base: cam.pan)
+            return .pan(origin: .zero)
         }
     }
 
@@ -259,7 +288,7 @@ struct FloorPlanView: View {
         switch current.kind {
         case .corner, .furniture: editing.cancelDrag()
         case .drawing: editing.setGuides(.none)
-        case .pan: break
+        case .pan: editPan = .zero
         }
     }
 
@@ -268,7 +297,7 @@ struct FloorPlanView: View {
     // The fit frame always uses the immutable `room`, so the plan never re-centres
     // under the finger while live geometry is being edited.
     private func planTransform(in size: CGSize) -> PlanGeometry.Transform? {
-        let live = cam.live(pinch: pinch, drag: dragLive, in: size)
+        let live = cam.live(pinch: pinch, drag: liveTranslation, in: size)
         return PlanGeometry.fit(room, in: size, padding: 28, maxScale: 240, includeObjects: showScanObjects)
             .map { $0.composed(in: size, zoom: live.zoom, pan: live.pan) }
     }
