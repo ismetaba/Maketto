@@ -1,9 +1,11 @@
 import SwiftUI
+import UIKit
 
 /// Whole-home scan: walk room to room in ONE capture, then "Taramayı Bitir".
 struct HomeScanScreen: View {
     @Environment(RoomStore.self) private var store
     @Environment(Router.self) private var router
+    @Environment(\.openURL) private var openURL
     @State private var scanner = HomeScanner()
     @State private var pulse = false
     @State private var showExitConfirm = false
@@ -12,53 +14,92 @@ struct HomeScanScreen: View {
         content
             .toolbar(.hidden, for: .navigationBar)
             .navigationBarBackButtonHidden(true)
+            .task { await scanner.prepare() }
+            // Leaving the screen (back, or after saving) always stops the camera.
+            .onDisappear { scanner.cancel() }
+            .persistentSystemOverlays(isCapturing ? .hidden : .automatic)
     }
 
-    @ViewBuilder
-    private var content: some View {
-        if !scanner.isSupported {
-            messageScreen(icon: nil, title: "LiDAR gerekli",
-                          body: "Ev taraması için LiDAR sensörlü bir cihaz gerekiyor (iPhone Pro / iPad Pro).",
-                          button: "Geri") { router.pop() }
-        } else {
-            switch scanner.state {
-            case .idle, .scanning:
-                scanningView
-            case .processing:
-                processingView
-            case .review(let rooms):
-                ScanReviewView(
-                    rooms: rooms,
-                    modelURLs: scanner.modelURLs,
-                    onSave: { edited, homeName in
-                        guard let id = store.saveScannedHome(edited, homeName: homeName,
-                                                             modelURLs: scanner.modelURLs) else {
-                            return false
-                        }
-                        router.popToRoot()
-                        router.push(.homeDetail(id))
-                        return true
-                    },
-                    onRescan: { scanner.reset() }
-                )
-            case .failed(let message):
-                messageScreen(icon: "exclamationmark.triangle", title: "Tarama başarısız",
-                              body: message, button: "Tekrar dene") { scanner.reset() }
-            case .unsupported:
-                EmptyView()
-            }
+    private var isCapturing: Bool {
+        switch scanner.state {
+        case .idle, .scanning, .processing: return true
+        default: return false
         }
     }
 
     @ViewBuilder
-    private var scanningView: some View {
+    private var content: some View {
+        switch scanner.state {
+        case .unsupported:
+            messageScreen(icon: nil, title: "LiDAR gerekli",
+                          body: "Ev taraması için LiDAR sensörlü bir cihaz gerekiyor (iPhone Pro / iPad Pro).",
+                          button: "Geri") { router.pop() }
+        case .preparing:
+            Color.black.ignoresSafeArea()
+        case .permissionDenied:
+            messageScreen(icon: "camera.fill", title: "Kamera izni gerekli",
+                          body: "Evinizi taramak için Maketto'nun kameraya erişmesi gerekiyor. Ayarlar'dan izin verebilirsiniz.",
+                          button: "Ayarları Aç", secondary: "Geri", secondaryAction: { router.pop() }) {
+                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+            }
+        case .idle, .scanning, .processing:
+            captureView
+        case .review(let rooms):
+            ScanReviewView(
+                rooms: rooms,
+                onSave: { edited, homeName in
+                    guard let id = store.saveScannedHome(edited, homeName: homeName,
+                                                         modelURLs: scanner.modelURLs) else {
+                        return false
+                    }
+                    router.popToRoot()
+                    router.push(.homeDetail(id))
+                    return true
+                },
+                onRescan: { scanner.reset() }
+            )
+        case .failed(let message):
+            messageScreen(icon: "exclamationmark.triangle", title: "Tarama başarısız",
+                          body: message, button: "Tekrar dene",
+                          secondary: "Vazgeç", secondaryAction: { router.pop() }) {
+                scanner.reset()
+            }
+        }
+    }
+
+    /// The live capture stays mounted through processing: tearing the view
+    /// down would release the session before it delivers the scan.
+    @ViewBuilder
+    private var captureView: some View {
         #if canImport(RoomPlan)
         ZStack(alignment: .top) {
             HomeCaptureViewRepresentable(scanner: scanner).ignoresSafeArea()
 
+            if scanner.state == .processing {
+                processingView.transition(.opacity)
+            } else {
+                scanChrome
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: scanner.state == .processing)
+        .confirmationDialog("Taramadan çıkılsın mı?", isPresented: $showExitConfirm,
+                            titleVisibility: .visible) {
+            Button("Çık", role: .destructive) { router.pop() }
+            Button("Taramaya Devam", role: .cancel) {}
+        } message: {
+            Text("Bu tarama kaydedilmeden silinir.")
+        }
+        #else
+        messageScreen(icon: "xmark.octagon", title: "RoomPlan yok",
+                      body: "Bu cihazda ev taraması kullanılamıyor.", button: "Geri") { router.pop() }
+        #endif
+    }
+
+    private var scanChrome: some View {
+        ZStack(alignment: .top) {
             HStack {
-                CircleIconButton("chevron.left", dark: true, accessibilityLabel: "Geri") {
-                    showExitConfirm = true
+                CircleIconButton("chevron.left", dark: true, accessibilityLabel: "Taramadan çık") {
+                    if scanner.state == .scanning { showExitConfirm = true } else { router.pop() }
                 }
                 Spacer()
             }
@@ -74,20 +115,12 @@ struct HomeScanScreen: View {
                     Label("Taramayı Bitir", systemImage: "checkmark")
                 }
                 .buttonStyle(ClayButtonStyle())
+                .disabled(scanner.state != .scanning)
+                .opacity(scanner.state == .scanning ? 1 : 0.5)
                 .padding(.bottom, 30)
             }
         }
         .onAppear { pulse = true }
-        .confirmationDialog("Taramadan çıkılsın mı?", isPresented: $showExitConfirm,
-                            titleVisibility: .visible) {
-            Button("Çık", role: .destructive) { router.pop() }
-            Button("Taramaya Devam", role: .cancel) {}
-        } message: {
-            Text("Bu tarama kaydedilmeden silinir.")
-        }
-        #else
-        ContentUnavailableView("RoomPlan yok", systemImage: "xmark.octagon")
-        #endif
     }
 
     private var hintPill: some View {
@@ -103,6 +136,7 @@ struct HomeScanScreen: View {
         }
         .padding(.horizontal, 16).padding(.vertical, 9)
         .background(Color.black.opacity(0.5), in: Capsule())
+        .accessibilityElement(children: .combine)
     }
 
     private var processingView: some View {
@@ -116,11 +150,14 @@ struct HomeScanScreen: View {
                 Text("Odalar tek bir haritada hizalanıyor.")
                     .font(.system(size: 15)).foregroundStyle(Brand.textSecondary)
             }
+            .accessibilityElement(children: .combine)
         }
     }
 
     private func messageScreen(icon: String?, title: String, body: String,
-                               button: String, action: @escaping () -> Void) -> some View {
+                               button: String, secondary: String? = nil,
+                               secondaryAction: (() -> Void)? = nil,
+                               action: @escaping () -> Void) -> some View {
         ZStack {
             Brand.surface.ignoresSafeArea()
             VStack(spacing: 14) {
@@ -130,12 +167,20 @@ struct HomeScanScreen: View {
                     MakettoLogo(size: 48)
                 }
                 Text(title).font(.display(30)).foregroundStyle(Brand.textPrimary)
+                    .multilineTextAlignment(.center)
                 Text(body)
                     .font(.system(size: 15)).foregroundStyle(Brand.textSecondary)
-                    .multilineTextAlignment(.center).padding(.horizontal, 50)
+                    .multilineTextAlignment(.center).padding(.horizontal, 44)
                 Button(action: action) { Text(button) }
                     .buttonStyle(EvergreenButtonStyle()).padding(.top, 8)
+                if let secondary, let secondaryAction {
+                    Button(secondary, action: secondaryAction)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Brand.textSecondary)
+                        .padding(.top, 2)
+                }
             }
+            .frame(maxWidth: 520)
         }
     }
 }

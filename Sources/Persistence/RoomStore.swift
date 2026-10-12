@@ -13,16 +13,54 @@ struct HomeSummary: Identifiable, Hashable, Sendable {
     let rooms: [RoomModel]
 }
 
-/// Hides SwiftData behind a small observable API. `homes` is a stored, observable
-/// property refreshed after every mutation so SwiftUI updates.
+/// One room as the editor sees it: geometry + furniture in the home's
+/// straightened DISPLAY frame, plus where it sits in its version history.
+struct RoomDocument: Hashable, Sendable {
+    let roomID: UUID
+    let room: RoomModel
+    let furniture: [PlacedFurniture]
+    let versionID: UUID?
+    /// 1-based position of the current version in chronological order.
+    let versionNumber: Int
+    let versionCount: Int
+    let versionLabel: String
+    /// Other rooms of the same home can be deleted without emptying it.
+    let canDeleteRoom: Bool
+}
+
+/// One saved version of a room, for the history sheet (display frame).
+struct VersionInfo: Identifiable, Hashable, Sendable {
+    let id: UUID
+    let label: String
+    let createdAt: Date
+    /// 1-based, oldest = 1.
+    let number: Int
+    let isCurrent: Bool
+    let room: RoomModel
+    let furniture: [PlacedFurniture]
+}
+
+/// Hides SwiftData behind a small observable API.
+///
+/// Every committed mutation calls `refresh()`, which bumps `revision`; every
+/// read API touches `revision`, so ANY view that reads through the store
+/// re-renders after a change (e.g. the home map after a room edit).
 @MainActor
 @Observable
 final class RoomStore {
     private let modelContext: ModelContext
     private(set) var homes: [HomeSummary] = []
+    private(set) var revision = 0
 
-    init(modelContext: ModelContext) {
+    /// Decoded snapshots by version id. Payloads are immutable, so entries
+    /// never go stale; they are evicted when their version is deleted.
+    @ObservationIgnored private var snapshotCache: [UUID: VersionSnapshot] = [:]
+    /// Keeps an owned container alive for in-memory stores (previews, tests).
+    @ObservationIgnored private var ownedContainer: ModelContainer?
+
+    init(modelContext: ModelContext, owning container: ModelContainer? = nil) {
         self.modelContext = modelContext
+        self.ownedContainer = container
         refresh()
     }
 
@@ -32,60 +70,88 @@ final class RoomStore {
         let descriptor = FetchDescriptor<Home>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
         let fetched = (try? modelContext.fetch(descriptor)) ?? []
         homes = fetched.map { home in
-            let raw = home.rooms
-                .sorted { $0.sortIndex < $1.sortIndex }
-                .compactMap { room -> RoomModel? in
-                    guard var rm = room.currentVersion?.snapshot?.room else { return nil }
-                    rm.name = room.name
-                    return rm
-                }
-            let models = HomeGeometry.straightened(raw)
+            let pose = straighteningPose(of: home)
+            let models = orderedRooms(of: home).compactMap { room -> RoomModel? in
+                guard let snap = currentSnapshot(of: room) else { return nil }
+                var rm = HomeGeometry.transform(snap.room, by: pose)
+                rm.name = room.name
+                return rm
+            }
             let area = models.reduce(0.0) { $0 + PlanGeometry.area(of: $1) }
             return HomeSummary(id: home.id, name: home.name, createdAt: home.createdAt,
                                roomCount: models.count, totalArea: area, rooms: models)
         }
+        revision &+= 1
     }
 
     func homeModel(for id: UUID) -> HomeModel? {
+        _ = revision
         guard let home = home(with: id) else { return nil }
-        let entries = home.rooms
-            .sorted { $0.sortIndex < $1.sortIndex }
-            .compactMap { room -> (Room, RoomModel)? in
-                guard var rm = room.currentVersion?.snapshot?.room else { return nil }
-                rm.name = room.name                    // Room.name is the source of truth
-                return (room, rm)
-            }
-        let straight = HomeGeometry.straightened(entries.map { $0.1 })
-        let placed = zip(entries, straight).map { entry, geom in
-            PlacedRoom(id: entry.0.id, name: entry.0.name, kind: geom.kind,
-                       sortIndex: entry.0.sortIndex, room: geom, placement: .identity,
-                       versionId: entry.0.currentVersion?.id)
+        let pose = straighteningPose(of: home)
+        let placed = orderedRooms(of: home).compactMap { room -> PlacedRoom? in
+            guard let version = room.currentVersion, let snap = snapshot(of: version) else { return nil }
+            var rm = HomeGeometry.transform(snap.room, by: pose)
+            rm.name = room.name                    // Room.name is the source of truth
+            return PlacedRoom(id: room.id, name: room.name, kind: rm.kind,
+                              sortIndex: room.sortIndex, room: rm,
+                              furniture: HomeGeometry.transform(snap.furniture, by: pose),
+                              placement: .identity, versionId: version.id)
         }
         return HomeModel(id: home.id, name: home.name, createdAt: home.createdAt, rooms: placed)
     }
 
-    func roomModel(for id: UUID) -> RoomModel? {
-        guard let room = room(with: id), var rm = room.currentVersion?.snapshot?.room else { return nil }
+    func document(for roomID: UUID) -> RoomDocument? {
+        _ = revision
+        guard let room = room(with: roomID), let current = room.currentVersion,
+              let snap = snapshot(of: current) else { return nil }
+        let pose = room.home.map { straighteningPose(of: $0) } ?? .identity
+        var rm = HomeGeometry.transform(snap.room, by: pose)
         rm.name = room.name
-        // Apply the home's straightening so a single room reads upright too.
-        if let home = room.home {
-            let homeRooms = home.rooms.compactMap { $0.currentVersion?.snapshot?.room }
-            return HomeGeometry.transform(rm, by: HomeGeometry.straighteningPose(of: homeRooms))
-        }
-        return rm
+        let chronological = room.versions.sorted(by: Self.chronological)
+        let number = (chronological.firstIndex { $0.id == current.id } ?? 0) + 1
+        return RoomDocument(
+            roomID: room.id, room: rm,
+            furniture: HomeGeometry.transform(snap.furniture, by: pose),
+            versionID: current.id, versionNumber: number,
+            versionCount: chronological.count, versionLabel: current.label,
+            canDeleteRoom: (room.home?.rooms.count ?? 1) > 1
+        )
     }
 
-    /// Number of saved versions for a room (the current version is always the
-    /// latest, so this doubles as the current version number).
-    func versionCount(for id: UUID) -> Int {
-        max(room(with: id)?.versions.count ?? 1, 1)
+    func roomModel(for id: UUID) -> RoomModel? { document(for: id)?.room }
+
+    /// The room's saved versions, NEWEST first, in the display frame.
+    func versions(for roomID: UUID) -> [VersionInfo] {
+        _ = revision
+        guard let room = room(with: roomID) else { return [] }
+        let pose = room.home.map { straighteningPose(of: $0) } ?? .identity
+        let chronological = room.versions.sorted(by: Self.chronological)
+        let infos = chronological.enumerated().compactMap { i, version -> VersionInfo? in
+            guard let snap = snapshot(of: version) else { return nil }
+            var rm = HomeGeometry.transform(snap.room, by: pose)
+            rm.name = room.name
+            return VersionInfo(id: version.id, label: version.label, createdAt: version.createdAt,
+                               number: i + 1, isCurrent: version.id == room.currentVersion?.id,
+                               room: rm, furniture: HomeGeometry.transform(snap.furniture, by: pose))
+        }
+        return Array(infos.reversed())
     }
 
     func modelURL(for id: UUID) -> URL? {
-        guard let path = room(with: id)?.currentVersion?.snapshot?.usdzPath else { return nil }
+        guard let room = room(with: id), let path = currentSnapshot(of: room)?.usdzPath else { return nil }
         let url = Self.modelsDirectory.appending(path: path)
         return FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) ? url : nil
     }
+
+    /// True when any saved version still shows a piece with this photo.
+    func isPhotoReferenced(_ photoID: String) -> Bool {
+        let versions = (try? modelContext.fetch(FetchDescriptor<Version>())) ?? []
+        return versions.contains { v in
+            snapshot(of: v)?.furniture.contains { $0.photoID == photoID } ?? false
+        }
+    }
+
+    // MARK: - Lookup helpers
 
     private func home(with id: UUID) -> Home? {
         let d = FetchDescriptor<Home>(predicate: #Predicate { $0.id == id })
@@ -95,6 +161,32 @@ final class RoomStore {
     private func room(with id: UUID) -> Room? {
         let d = FetchDescriptor<Room>(predicate: #Predicate { $0.id == id })
         return try? modelContext.fetch(d).first
+    }
+
+    private func orderedRooms(of home: Home) -> [Room] {
+        home.rooms.sorted {
+            $0.sortIndex != $1.sortIndex ? $0.sortIndex < $1.sortIndex : $0.createdAt < $1.createdAt
+        }
+    }
+
+    private static func chronological(_ a: Version, _ b: Version) -> Bool {
+        a.createdAt != b.createdAt ? a.createdAt < b.createdAt : a.id.uuidString < b.id.uuidString
+    }
+
+    private func snapshot(of version: Version) -> VersionSnapshot? {
+        if let cached = snapshotCache[version.id] { return cached }
+        guard let decoded = version.snapshot else { return nil }
+        snapshotCache[version.id] = decoded
+        return decoded
+    }
+
+    private func currentSnapshot(of room: Room) -> VersionSnapshot? {
+        room.currentVersion.flatMap(snapshot(of:))
+    }
+
+    /// The whole home's straightening pose (raw scan frame → display frame).
+    private func straighteningPose(of home: Home) -> Pose2D {
+        HomeGeometry.straighteningPose(of: home.rooms.compactMap { currentSnapshot(of: $0)?.room })
     }
 
     // MARK: - Writes
@@ -109,8 +201,16 @@ final class RoomStore {
         let home = Home(name: trimmed.isEmpty ? "Evim" : trimmed)
         var copied: [String] = []
 
+        // Discards every pending insert of this call (nothing was saved yet).
+        func abort() -> UUID? {
+            modelContext.rollback()
+            copied.forEach { removeModelFile($0) }
+            return nil
+        }
+
         for (i, rm) in rooms.enumerated() {
-            let room = Room(name: rm.name.isEmpty ? "Oda \(i + 1)" : rm.name, sortIndex: i)
+            let name = rm.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let room = Room(name: name.isEmpty ? "Oda \(i + 1)" : name, sortIndex: i)
             room.home = home
             home.rooms.append(room)
 
@@ -121,17 +221,15 @@ final class RoomStore {
                 try? FileManager.default.removeItem(at: dest)
                 if (try? FileManager.default.copyItem(at: url, to: dest)) != nil {
                     usdz = dest.lastPathComponent
-                    copied.append(usdz!)
+                    copied.append(dest.lastPathComponent)
                 }
             }
 
             let snapshot = VersionSnapshot(room: rm, usdzPath: usdz)
             guard let payload = try? JSONEncoder().encode(snapshot), !payload.isEmpty else {
-                modelContext.rollback()
-                copied.forEach { removeModelFile($0) }
-                return nil
+                return abort()
             }
-            let version = Version(label: "Version 1", payload: payload)
+            let version = Version(label: Self.versionLabel(1), payload: payload)
             version.room = room
             room.versions.append(version)
             room.currentVersion = version
@@ -143,38 +241,33 @@ final class RoomStore {
         do {
             try modelContext.save()
         } catch {
-            modelContext.rollback()
-            copied.forEach { removeModelFile($0) }
-            return nil
+            return abort()
         }
         refresh()
         return home.id
     }
 
-    /// Persist a hand-edited room as a NEW Version and make it current.
-    /// `editedDisplayRoom` comes from the editor in the STRAIGHTENED display frame
-    /// (matching `roomModel(for:)`); it is converted back to the raw home frame so
-    /// the stored snapshot stays consistent with every other room. Rolls back fully
+    /// Persist a hand-edited room (+ its furniture) as a NEW Version and make it
+    /// current. The input is in the STRAIGHTENED display frame (as returned by
+    /// `document(for:)`); it is converted back to the raw home frame so the
+    /// stored snapshot stays consistent with every other room. Rolls back fully
     /// on failure. Returns false if nothing was saved.
     @discardableResult
-    func saveEditedRoom(id: UUID, editedDisplayRoom: RoomModel, label: String? = nil) -> Bool {
+    func saveEditedRoom(id: UUID, editedDisplayRoom: RoomModel,
+                        furniture: [PlacedFurniture] = [], label: String? = nil) -> Bool {
         guard let room = room(with: id) else { return false }
 
-        let raw: RoomModel
-        if let home = room.home {
-            let homeRooms = home.rooms.compactMap { $0.currentVersion?.snapshot?.room }
-            let pose = HomeGeometry.straighteningPose(of: homeRooms)
-            raw = HomeGeometry.transform(editedDisplayRoom, by: pose.inverse)
-        } else {
-            raw = editedDisplayRoom
-        }
+        let inverse = (room.home.map { straighteningPose(of: $0) } ?? .identity).inverse
+        let raw = HomeGeometry.transform(editedDisplayRoom, by: inverse)
+        let rawFurniture = HomeGeometry.transform(furniture, by: inverse)
 
-        let snapshot = VersionSnapshot(room: raw, usdzPath: room.currentVersion?.snapshot?.usdzPath)
+        let snapshot = VersionSnapshot(room: raw, furniture: rawFurniture,
+                                       usdzPath: currentSnapshot(of: room)?.usdzPath)
         guard let payload = try? JSONEncoder().encode(snapshot), !payload.isEmpty else { return false }
 
         let trimmed = (label ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = trimmed.isEmpty ? "Version \(room.versions.count + 1)" : trimmed
-        let version = Version(label: name, payload: payload)
+        let version = Version(label: trimmed.isEmpty ? nextVersionLabel(for: room) : trimmed,
+                              payload: payload)
         version.room = room
         let previousCurrent = room.currentVersion
         room.versions.append(version)
@@ -189,33 +282,152 @@ final class RoomStore {
             modelContext.rollback()
             return false
         }
+        snapshotCache[version.id] = snapshot
         refresh()
         return true
     }
 
-    func renameRoom(id: UUID, to name: String) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let room = room(with: id) else { return }
-        room.name = trimmed
-        do { try modelContext.save() } catch { modelContext.rollback(); return }
+    /// Make an older version current again. Nothing is deleted; the version
+    /// you leave stays in the history.
+    @discardableResult
+    func restoreVersion(roomID: UUID, versionID: UUID) -> Bool {
+        guard let room = room(with: roomID),
+              let target = room.versions.first(where: { $0.id == versionID }) else { return false }
+        guard target.id != room.currentVersion?.id else { return true }
+        let previous = room.currentVersion
+        room.currentVersion = target
+        do {
+            try modelContext.save()
+        } catch {
+            room.currentVersion = previous
+            modelContext.rollback()
+            return false
+        }
         refresh()
+        return true
     }
 
-    func renameHome(id: UUID, to name: String) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let home = home(with: id) else { return }
-        home.name = trimmed
-        do { try modelContext.save() } catch { modelContext.rollback(); return }
+    @discardableResult
+    func renameVersion(roomID: UUID, versionID: UUID, to label: String) -> Bool {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let room = room(with: roomID),
+              let version = room.versions.first(where: { $0.id == versionID }) else { return false }
+        let previous = version.label
+        version.label = String(trimmed.prefix(60))
+        do {
+            try modelContext.save()
+        } catch {
+            version.label = previous
+            modelContext.rollback()
+            return false
+        }
         refresh()
+        return true
     }
 
-    func deleteHome(id: UUID) {
-        guard let home = home(with: id) else { return }
-        let paths = home.rooms.compactMap { $0.currentVersion?.snapshot?.usdzPath }
-        modelContext.delete(home)
-        do { try modelContext.save() } catch { modelContext.rollback(); return }
+    /// Delete a non-current version (the current one and the last one are kept).
+    @discardableResult
+    func deleteVersion(roomID: UUID, versionID: UUID) -> Bool {
+        guard let room = room(with: roomID), room.versions.count > 1,
+              room.currentVersion?.id != versionID,
+              let version = room.versions.first(where: { $0.id == versionID }) else { return false }
+        room.versions.removeAll { $0.id == versionID }
+        modelContext.delete(version)
+        do {
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            return false
+        }
+        snapshotCache[versionID] = nil
+        refresh()
+        return true
+    }
+
+    @discardableResult
+    func renameRoom(id: UUID, to name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let room = room(with: id) else { return false }
+        let previous = room.name
+        room.name = String(trimmed.prefix(60))
+        do {
+            try modelContext.save()
+        } catch {
+            room.name = previous
+            modelContext.rollback()
+            return false
+        }
+        refresh()
+        return true
+    }
+
+    @discardableResult
+    func renameHome(id: UUID, to name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let home = home(with: id) else { return false }
+        let previous = home.name
+        home.name = String(trimmed.prefix(60))
+        do {
+            try modelContext.save()
+        } catch {
+            home.name = previous
+            modelContext.rollback()
+            return false
+        }
+        refresh()
+        return true
+    }
+
+    /// Delete one room (and its history) from a home. The last room of a home
+    /// is kept — delete the home instead.
+    @discardableResult
+    func deleteRoom(id: UUID) -> Bool {
+        guard let room = room(with: id), let home = room.home, home.rooms.count > 1 else { return false }
+        let versionIDs = room.versions.map(\.id)
+        let paths = Set(room.versions.compactMap { snapshot(of: $0)?.usdzPath })
+        home.rooms.removeAll { $0.id == id }
+        modelContext.delete(room)
+        do {
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            return false
+        }
+        versionIDs.forEach { snapshotCache[$0] = nil }
         paths.forEach { removeModelFile($0) }   // remove files only after the delete commits
         refresh()
+        return true
+    }
+
+    @discardableResult
+    func deleteHome(id: UUID) -> Bool {
+        guard let home = home(with: id) else { return false }
+        let versions = home.rooms.flatMap(\.versions)
+        let paths = Set(versions.compactMap { snapshot(of: $0)?.usdzPath })
+        let versionIDs = versions.map(\.id)
+        modelContext.delete(home)
+        do {
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            return false
+        }
+        versionIDs.forEach { snapshotCache[$0] = nil }
+        paths.forEach { removeModelFile($0) }   // remove files only after the delete commits
+        refresh()
+        return true
+    }
+
+    // MARK: - Version labels
+
+    static func versionLabel(_ number: Int) -> String { "Sürüm \(number)" }
+
+    /// "Sürüm N" for the next N not already used by this room.
+    private func nextVersionLabel(for room: Room) -> String {
+        let used = Set(room.versions.map(\.label))
+        var n = room.versions.count + 1
+        while used.contains(Self.versionLabel(n)) { n += 1 }
+        return Self.versionLabel(n)
     }
 
     // MARK: - Model file storage
@@ -233,16 +445,23 @@ final class RoomStore {
 
     // MARK: - Preview / tests
 
-    static var preview: RoomStore {
+    static func inMemory() -> RoomStore {
         let schema = Schema(versionedSchema: SchemaV1.self)
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        // An in-memory store cannot fail to open short of a programming error.
         let container = try! ModelContainer(for: schema, configurations: [config])
-        let store = RoomStore(modelContext: container.mainContext)
-        let rooms = [
-            RoomModel.mockLShaped,
-            HomeGeometry.transform(.mock, by: Pose2D(translation: Point2D(x: 5.2, z: 0)))
-        ]
-        store.saveScannedHome(rooms, homeName: "Daire 1")
+        return RoomStore(modelContext: container.mainContext, owning: container)
+    }
+
+    static var preview: RoomStore {
+        let store = inMemory()
+        var living = RoomModel.mockLShaped
+        living.name = "Salon"
+        living.kind = .livingRoom
+        var bedroom = HomeGeometry.transform(.mock, by: Pose2D(translation: Point2D(x: 5.2, z: 0)))
+        bedroom.name = "Yatak Odası"
+        bedroom.kind = .bedroom
+        store.saveScannedHome([living, bedroom], homeName: "Daire 1")
         return store
     }
 }

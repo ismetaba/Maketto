@@ -172,7 +172,7 @@ struct RoomDetailView: View {
                         .foregroundStyle(Brand.textPrimary)
                         .lineLimit(1)
                     if !isEditing {
-                        Text("v\(store.versionCount(for: roomID))")
+                        Text("v\(store.document(for: roomID)?.versionNumber ?? 1)")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(Color(hex: 0x453516))
                             .padding(.horizontal, 8).padding(.vertical, 2)

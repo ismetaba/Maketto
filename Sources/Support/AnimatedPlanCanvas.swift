@@ -13,7 +13,9 @@ struct AnimatedPlanCanvas: View, Animatable {
     var pan: CGSize
     var draw: (GraphicsContext, CGSize, CGFloat, CGSize) -> Void
 
-    var animatableData: AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>> {
+    // `nonisolated`: SwiftUI reads/writes animatable data off the view's
+    // isolation (Animatable is a nonisolated protocol on iOS 17/18 SDKs).
+    nonisolated var animatableData: AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>> {
         get { AnimatablePair(zoom, AnimatablePair(pan.width, pan.height)) }
         set {
             zoom = newValue.first

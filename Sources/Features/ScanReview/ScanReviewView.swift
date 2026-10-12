@@ -4,7 +4,6 @@ import SwiftUI
 /// default names. Select a room (on the map or via its chip) to rename it and
 /// fix its type; name the home; save.
 struct ScanReviewView: View {
-    let modelURLs: [UUID: URL]
     let onSave: ([RoomModel], String) -> Bool
     let onRescan: () -> Void
 
@@ -16,13 +15,18 @@ struct ScanReviewView: View {
     @State private var selectedRoomID: UUID?
     @State private var saveFailed = false
     @State private var showRescanConfirm = false
+    @State private var removeTarget: RoomModel?
+    @State private var isSaving = false
     @State private var camera = PlanCamera()
+    @FocusState private var focusedField: Field?
 
-    init(rooms: [RoomModel], modelURLs: [UUID: URL],
+    private enum Field: Hashable { case roomName, homeName }
+
+    init(rooms: [RoomModel],
          onSave: @escaping ([RoomModel], String) -> Bool, onRescan: @escaping () -> Void) {
         _rooms = State(initialValue: rooms)
-        _autoNames = State(initialValue: Dictionary(uniqueKeysWithValues: rooms.map { ($0.id, $0.name) }))
-        self.modelURLs = modelURLs
+        _autoNames = State(initialValue: Dictionary(rooms.map { ($0.id, $0.name) },
+                                                    uniquingKeysWith: { a, _ in a }))
         self.onSave = onSave
         self.onRescan = onRescan
     }
@@ -37,10 +41,12 @@ struct ScanReviewView: View {
             Brand.surface.ignoresSafeArea()
 
             WholeHomePlanView(rooms: rooms, selectedRoomID: selectedRoomID, camera: camera) { id in
+                focusedField = nil
                 withAnimation(.maketto) { selectedRoomID = id }
                 if id != nil { Haptics.selection() }
             }
             .ignoresSafeArea()
+            .ignoresSafeArea(.keyboard)
 
             VStack(spacing: 0) {
                 topRow
@@ -72,6 +78,40 @@ struct ScanReviewView: View {
             Button("Vazgeç", role: .cancel) {}
         } message: {
             Text("Bu tarama ve yaptığınız tüm düzenlemeler silinir.")
+        }
+        .confirmationDialog("\u{201C}\(removeTarget?.name ?? "")\u{201D} kaldırılsın mı?",
+                            isPresented: removePresented, titleVisibility: .visible) {
+            Button("Odayı Kaldır", role: .destructive) {
+                if let target = removeTarget { remove(target) }
+                removeTarget = nil
+            }
+            Button("Vazgeç", role: .cancel) { removeTarget = nil }
+        } message: {
+            Text("Yanlış algılanan bir alanı plandan çıkarır. Kaydetmeden önce geri almak için yeniden tarayın.")
+        }
+    }
+
+    private var removePresented: Binding<Bool> {
+        Binding(get: { removeTarget != nil }, set: { if !$0 { removeTarget = nil } })
+    }
+
+    private func remove(_ room: RoomModel) {
+        withAnimation(.maketto) {
+            rooms.removeAll { $0.id == room.id }
+            if selectedRoomID == room.id { selectedRoomID = nil }
+        }
+        Haptics.light()
+    }
+
+    private func save() {
+        guard !isSaving else { return }
+        focusedField = nil
+        isSaving = true
+        if onSave(rooms, homeName) {
+            Haptics.success()
+        } else {
+            isSaving = false
+            saveFailed = true
         }
     }
 
@@ -118,8 +158,23 @@ struct ScanReviewView: View {
         VStack(spacing: 12) {
             if let idx = selectedIndex {
                 HStack(spacing: 10) {
-                    field(icon: "pencil", placeholder: "Oda adı", text: roomName(idx))
+                    field(icon: "pencil", placeholder: "Oda adı", text: roomName(idx), focus: .roomName)
                     kindMenu(idx)
+                    if rooms.count > 1 {
+                        Button { removeTarget = rooms[idx] } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Brand.clay)
+                                .frame(width: 50, height: 50)
+                                .background(Brand.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .strokeBorder(Brand.hairline, lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Odayı kaldır")
+                    }
                 }
             } else {
                 Text("Bir odaya dokunup adını ve türünü düzenleyin")
@@ -129,30 +184,37 @@ struct ScanReviewView: View {
                     .padding(.vertical, 6)
             }
 
-            field(icon: "house", placeholder: "Ev adı", text: $homeName)
+            field(icon: "house", placeholder: "Ev adı", text: $homeName, focus: .homeName)
 
-            Button {
-                if onSave(rooms, homeName) {
-                    Haptics.success()
-                } else {
-                    saveFailed = true
-                }
-            } label: {
+            Button { save() } label: {
                 HStack(spacing: 9) {
-                    Text("Evi Kaydet")
-                    Image(systemName: "checkmark").font(.system(size: 15, weight: .bold))
+                    if isSaving {
+                        ProgressView().tint(Brand.bone100)
+                    } else {
+                        Text("Evi Kaydet")
+                        Image(systemName: "checkmark").font(.system(size: 15, weight: .bold))
+                    }
                 }
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(EvergreenButtonStyle())
+            .disabled(isSaving || rooms.isEmpty)
         }
         .padding(18)
         .glassPanel(cornerRadius: 26)
         .padding(.horizontal, 14)
     }
 
+    /// Bound by id (not index) so removing a room can never write a stale slot.
     private func roomName(_ idx: Int) -> Binding<String> {
-        Binding(get: { rooms[idx].name }, set: { rooms[idx].name = $0 })
+        let id = rooms[idx].id
+        return Binding(
+            get: { rooms.first { $0.id == id }?.name ?? "" },
+            set: { value in
+                guard let i = rooms.firstIndex(where: { $0.id == id }) else { return }
+                rooms[i].name = String(value.prefix(40))
+            }
+        )
     }
 
     /// Room-type picker. Fixing the type also refreshes the auto default name —
@@ -195,12 +257,18 @@ struct ScanReviewView: View {
         Haptics.selection()
     }
 
-    private func field(icon: String, placeholder: String, text: Binding<String>) -> some View {
+    private func field(icon: String, placeholder: String, text: Binding<String>,
+                       focus: Field) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon).font(.system(size: 14)).foregroundStyle(Brand.textFaint)
             TextField(placeholder, text: text)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(Brand.textPrimary)
+                .focused($focusedField, equals: focus)
+                .submitLabel(.done)
+                .onSubmit { focusedField = nil }
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
         }
         .padding(.horizontal, 16).padding(.vertical, 14)
         .background(Brand.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -217,6 +285,6 @@ struct ScanReviewView: View {
             { var r = RoomModel.mockLShaped; r.kind = .livingRoom; return r }(),
             { var r = HomeGeometry.transform(.mock, by: Pose2D(translation: Point2D(x: 5.2, z: 0))); r.kind = .bedroom; return r }()
         ]),
-        modelURLs: [:], onSave: { _, _ in true }, onRescan: {}
+        onSave: { _, _ in true }, onRescan: {}
     )
 }
