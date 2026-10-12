@@ -144,3 +144,36 @@ struct SnapshotTests {
         #expect(snap.room.walls.count == 4)
     }
 }
+
+struct MeasurementFormatTests {
+    @Test func formatsWithTurkishDecimals() {
+        #expect(MeasurementFormat.meters(3.456) == "3,46 m")
+        #expect(MeasurementFormat.squareMeters(12.44) == "12,4 m²")
+    }
+
+    @Test func parsesCentimeters() {
+        #expect(MeasurementFormat.parseCentimeters("345") == 3.45)
+        #expect(MeasurementFormat.parseCentimeters(" 345,5 ") == 3.455)
+        #expect(MeasurementFormat.parseCentimeters("120 cm") == 1.2)
+        #expect(MeasurementFormat.parseCentimeters("abc") == nil)
+        #expect(MeasurementFormat.parseCentimeters("-5") == nil)
+        #expect(MeasurementFormat.parseCentimeters("") == nil)
+    }
+
+    @Test func centimeterInputRoundTrips() {
+        #expect(MeasurementFormat.centimeterInput(3.45) == "345")
+        #expect(MeasurementFormat.centimeterInput(3.455) == "345,5")
+        #expect(MeasurementFormat.parseCentimeters(MeasurementFormat.centimeterInput(2.875)) == 2.875)
+    }
+
+    @Test func degrees() {
+        #expect(MeasurementFormat.degreesInput(-.pi / 2) == "270")
+        #expect(approx(MeasurementFormat.parseDegrees("90°")!, .pi / 2))
+        #expect(MeasurementFormat.parseDegrees("x") == nil)
+    }
+
+    @Test func turkishUppercase() {
+        #expect(MeasurementFormat.uppercased("Giriş") == "GİRİŞ")
+        #expect(MeasurementFormat.uppercased("Yatak Odası") == "YATAK ODASI")
+    }
+}

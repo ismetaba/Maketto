@@ -11,9 +11,13 @@ import UIKit
 /// Reuses FloorPlanRenderer.
 struct WholeHomePlanView: View {
     let rooms: [RoomModel]
+    /// Placed furniture of every room, in the same (home) frame.
+    var furniture: [PlacedFurniture] = []
     /// Interactive maps get gestures, the metric grid and room labels; a
     /// non-interactive plan is a calm static thumbnail.
     var interactive: Bool = true
+    /// Room names + areas (defaults to on for interactive maps).
+    var showLabels: Bool?
     var selectedRoomID: UUID?
     /// External camera; when nil (thumbnails, previews) an internal one is used.
     var camera: PlanCamera?
@@ -130,7 +134,7 @@ struct WholeHomePlanView: View {
             walls: PlanGeometry.dropOffAxisOutliers(PlanGeometry.deduped(rooms.flatMap(\.walls))),
             openings: PlanGeometry.deduped(rooms.flatMap(\.openings)),
             centroid: HomeGeometry.bboxCenter(of: rooms),
-            objects: [], into: context, t: t, ink: ink, showFurniture: false
+            objects: [], into: context, t: t, ink: ink, showScanObjects: false
         )
 
         // Selection: soft glow + crisp outline in the room's own accent.
@@ -145,9 +149,11 @@ struct WholeHomePlanView: View {
                            style: StrokeStyle(lineWidth: 3.5, lineJoin: .round))
         }
 
+        FloorPlanRenderer.drawFurniture(furniture, into: context, t: t, dark: dark, labels: false)
+
         // Labels last, so neighbouring fills never cover text (skipped on
         // static thumbnails, where they'd be unreadably small anyway).
-        if interactive {
+        if showLabels ?? interactive {
             for (i, room) in rooms.enumerated() {
                 drawLabel(context, room: room, tint: RoomPalette.tint(i), t: t)
             }
@@ -162,7 +168,7 @@ struct WholeHomePlanView: View {
         let center = t.apply(centroid)
 
         let nameText = context.resolve(
-            Text(room.name.uppercased())
+            Text(MeasurementFormat.uppercased(room.name))
                 .font(.system(size: 11, weight: .bold))
                 .foregroundColor(tint.accent)
         )

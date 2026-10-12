@@ -65,19 +65,34 @@ public enum HomeGeometry {
 
     /// Dominant wall skew of a set of rooms, radians in [-π/4, π/4]. Length-weighted
     /// circular mean over the 90°-periodic wall orientation (×4 → full circle → /4).
+    ///
+    /// Robust: a second pass keeps only walls within ±10° of the first
+    /// estimate, so a deliberately angled wall (a bay, a diagonal partition)
+    /// never tilts an otherwise square home.
     public static func dominantAngle(of rooms: [RoomModel]) -> Double {
+        let walls = rooms.flatMap(\.walls)
+        guard let first = circularMean(walls, within: nil) else { return 0 }
+        return circularMean(walls, within: (first, 10 * .pi / 180)) ?? first
+    }
+
+    private static func circularMean(_ walls: [Wall], within window: (Double, Double)?) -> Double? {
         var sx = 0.0, sy = 0.0
-        for room in rooms {
-            for wall in room.walls {
-                let d = wall.end - wall.start
-                let len = d.length
-                guard len > 1e-6 else { continue }
-                let a = atan2(d.z, d.x) * 4
-                sx += len * cos(a)
-                sy += len * sin(a)
+        for wall in walls {
+            let d = wall.end - wall.start
+            let len = d.length
+            guard len > 1e-6 else { continue }
+            let angle = atan2(d.z, d.x)
+            if let (center, tolerance) = window {
+                // Distance from `center` on the 90°-periodic circle.
+                var delta = (angle - center).truncatingRemainder(dividingBy: .pi / 2)
+                if delta > .pi / 4 { delta -= .pi / 2 }
+                if delta < -.pi / 4 { delta += .pi / 2 }
+                guard abs(delta) <= tolerance else { continue }
             }
+            sx += len * cos(angle * 4)
+            sy += len * sin(angle * 4)
         }
-        if sx == 0, sy == 0 { return 0 }
+        if abs(sx) < 1e-12, abs(sy) < 1e-12 { return nil }
         return atan2(sy, sx) / 4
     }
 

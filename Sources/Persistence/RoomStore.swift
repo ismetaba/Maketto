@@ -137,12 +137,6 @@ final class RoomStore {
         return Array(infos.reversed())
     }
 
-    func modelURL(for id: UUID) -> URL? {
-        guard let room = room(with: id), let path = currentSnapshot(of: room)?.usdzPath else { return nil }
-        let url = Self.modelsDirectory.appending(path: path)
-        return FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) ? url : nil
-    }
-
     /// True when any saved version still shows a piece with this photo.
     func isPhotoReferenced(_ photoID: String) -> Bool {
         let versions = (try? modelContext.fetch(FetchDescriptor<Version>())) ?? []

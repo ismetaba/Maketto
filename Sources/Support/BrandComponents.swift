@@ -56,7 +56,7 @@ struct Overline: View {
     }
 
     var body: some View {
-        Text(text.uppercased())
+        Text(MeasurementFormat.uppercased(text))
             .font(.system(size: size, weight: .bold))
             .tracking(size * 0.16)
             .foregroundStyle(color)
@@ -304,26 +304,6 @@ struct RoomChipsRow: View {
                 if let id = selectedID { proxy.scrollTo(id, anchor: .center) }
             }
         }
-    }
-}
-
-// MARK: - Visualize FAB
-
-/// The clay "Görselleştir" floating action button (AI render entry point),
-/// identical on the home map and the room editor.
-struct VisualizeFAB: View {
-    var action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 56, height: 56)
-                .background(Brand.clayGradient, in: Circle())
-                .shadow(color: Brand.clayDeep.opacity(0.6), radius: 16, x: 0, y: 10)
-        }
-        .accessibilityLabel("Görselleştir")
     }
 }
 

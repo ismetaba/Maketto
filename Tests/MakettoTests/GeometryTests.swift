@@ -116,6 +116,16 @@ struct HomeGeometryTests {
         #expect(zip(straight.walls, RoomModel.mock.walls).allSatisfy { approx($0.length, $1.length) })
     }
 
+    @Test func aDiagonalWallDoesNotTiltASquareHome() {
+        var room = RoomModel.mock
+        room.walls.append(Wall(start: Point2D(x: 0, z: 3), end: Point2D(x: 2, z: 4.2)))   // ~31°
+        #expect(HomeGeometry.straighteningPose(of: [room]) == .identity)
+
+        let skew = Pose2D(rotation: 0.12)
+        let skewed = HomeGeometry.transform(room, by: skew)
+        #expect(abs(HomeGeometry.dominantAngle(of: [skewed]) - 0.12) < 1e-9)
+    }
+
     @Test func furnitureFollowsTheFrame() {
         let pose = Pose2D(rotation: .pi / 2, translation: Point2D(x: 2, z: 0))
         let item = PlacedFurniture(name: "x", center: Point2D(x: 1, z: 0), width: 1, depth: 1)

@@ -10,7 +10,10 @@ struct HomeDetailView: View {
 
     @State private var camera = PlanCamera()
     @State private var selectedRoomID: UUID?
-    @State private var showVisualizeSoon = false
+    @State private var show3D = false
+    @State private var sceneResetToken = 0
+    @State private var share: ShareItem?
+    @State private var exportFailed = false
 
     @State private var renamingRoom: PlacedRoom?
     @State private var renamingHome = false
@@ -26,15 +29,23 @@ struct HomeDetailView: View {
             if let home {
                 content(home)
             } else {
-                ContentUnavailableView("Ev bulunamadı", systemImage: "exclamationmark.triangle")
+                VStack(spacing: 18) {
+                    ContentUnavailableView("Ev bulunamadı", systemImage: "exclamationmark.triangle",
+                                           description: Text("Bu ev silinmiş olabilir."))
+                    Button("Geri Dön") { router.pop() }
+                        .buttonStyle(EvergreenButtonStyle())
+                }
             }
         }
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
-        .alert("Görselleştirme yakında", isPresented: $showVisualizeSoon) {
+        .sheet(item: $share) { item in
+            ShareSheet(item: item).ignoresSafeArea()
+        }
+        .alert("Dışa aktarılamadı", isPresented: $exportFailed) {
             Button("Tamam", role: .cancel) {}
         } message: {
-            Text("Yapay zekâ ile fotogerçekçi oda görselleri bir sonraki sürümde gelecek.")
+            Text("Plan görseli oluşturulamadı. Lütfen tekrar deneyin.")
         }
         .renameAlert("Odayı Yeniden Adlandır", placeholder: "Oda adı",
                      isPresented: roomRenamePresented, text: $renameText) {
@@ -59,15 +70,25 @@ struct HomeDetailView: View {
 
     private func content(_ home: HomeModel) -> some View {
         ZStack {
-            WholeHomePlanView(
-                rooms: home.roomsInHomeFrame,
-                selectedRoomID: selectedRoomID,
-                camera: camera
-            ) { id in
-                withAnimation(.maketto) { selectedRoomID = id }
-                if id != nil { Haptics.selection() }
+            if show3D {
+                RoomSceneView(rooms: home.roomsInHomeFrame, furniture: home.furnitureInHomeFrame,
+                              floorTints: home.orderedRooms.indices.map { RoomPalette.tint($0).fill },
+                              resetToken: sceneResetToken)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+            } else {
+                WholeHomePlanView(
+                    rooms: home.roomsInHomeFrame,
+                    furniture: home.furnitureInHomeFrame,
+                    selectedRoomID: selectedRoomID,
+                    camera: camera
+                ) { id in
+                    withAnimation(.maketto) { selectedRoomID = id }
+                    if id != nil { Haptics.selection() }
+                }
+                .ignoresSafeArea()
+                .transition(.opacity)
             }
-            .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 topBar(home)
@@ -76,12 +97,22 @@ struct HomeDetailView: View {
                 Spacer()
                     .frame(maxWidth: .infinity)
                     .overlay(alignment: .trailing) {
-                        MapControlStack(camera: camera)
-                            .padding(.trailing, 12)
+                        Group {
+                            if show3D {
+                                CircleIconButton("viewfinder", accessibilityLabel: "Görünümü sıfırla") {
+                                    sceneResetToken += 1
+                                    Haptics.light()
+                                }
+                            } else {
+                                MapControlStack(camera: camera)
+                            }
+                        }
+                        .padding(.trailing, 12)
                     }
                 bottomStack(home)
             }
         }
+        .animation(.easeInOut(duration: 0.25), value: show3D)
     }
 
     private func topBar(_ home: HomeModel) -> some View {
@@ -106,6 +137,9 @@ struct HomeDetailView: View {
                 Button { camera.reset() } label: {
                     Label("Haritaya Sığdır", systemImage: "viewfinder")
                 }
+                Button { sharePlan(home) } label: {
+                    Label("Planı Paylaş", systemImage: "square.and.arrow.up")
+                }
                 Divider()
                 Button(role: .destructive) { showDeleteHome = true } label: {
                     Label("Evi Sil", systemImage: "trash")
@@ -123,8 +157,17 @@ struct HomeDetailView: View {
     }
 
     private func subtitle(_ home: HomeModel) -> String {
-        let area = home.rooms.reduce(0.0) { $0 + PlanGeometry.area(of: $1.room) }
-        return "\(home.rooms.count) oda · \(MeasurementFormat.squareMeters(area))"
+        "\(home.rooms.count) oda · \(MeasurementFormat.squareMeters(home.totalArea))"
+    }
+
+    private func sharePlan(_ home: HomeModel) {
+        guard let url = PlanExporter.planImage(rooms: home.roomsInHomeFrame,
+                                               furniture: home.furnitureInHomeFrame,
+                                               title: home.name, subtitle: subtitle(home)) else {
+            exportFailed = true
+            return
+        }
+        share = ShareItem(urls: [url])
     }
 
     @ViewBuilder
@@ -133,28 +176,57 @@ struct HomeDetailView: View {
         VStack(spacing: 12) {
             HStack {
                 Spacer()
-                VisualizeFAB { showVisualizeSoon = true }
+                viewToggle
             }
             .padding(.horizontal, 18)
 
-            if let sel = selectedRoomID,
+            if !show3D, let sel = selectedRoomID,
                let idx = ordered.firstIndex(where: { $0.id == sel }) {
                 roomCard(ordered[idx], index: idx)
                     .frame(maxWidth: 468)   // don't stretch edge-to-edge on iPad
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            RoomChipsRow(
-                entries: ordered.enumerated().map { i, placed in
-                    RoomChipsRow.Entry(id: placed.id, name: placed.name,
-                                       tint: RoomPalette.tint(i))
-                },
-                selectedID: selectedRoomID
-            ) { id in
-                withAnimation(.maketto) { selectedRoomID = id }
+            if !show3D {
+                chips(ordered)
             }
         }
         .padding(.bottom, 12)
+    }
+
+    /// 2D map ⇄ 3D dollhouse of the whole home.
+    private var viewToggle: some View {
+        Button {
+            withAnimation(.maketto) {
+                show3D.toggle()
+                if show3D { selectedRoomID = nil }
+            }
+            Haptics.selection()
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: show3D ? "map" : "cube")
+                    .font(.system(size: 15, weight: .bold))
+                Text(show3D ? "2D Plan" : "3D Görünüm")
+                    .font(.system(size: 14, weight: .bold))
+            }
+            .foregroundStyle(.white)
+            .padding(.vertical, 12)
+            .padding(.horizontal, 18)
+            .background(Brand.clayGradient, in: Capsule())
+            .shadow(color: Brand.clayDeep.opacity(0.45), radius: 14, x: 0, y: 8)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func chips(_ ordered: [PlacedRoom]) -> some View {
+        RoomChipsRow(
+            entries: ordered.enumerated().map { i, placed in
+                RoomChipsRow.Entry(id: placed.id, name: placed.name, tint: RoomPalette.tint(i))
+            },
+            selectedID: selectedRoomID
+        ) { id in
+            withAnimation(.maketto) { selectedRoomID = id }
+        }
     }
 
     // MARK: - Room card (selection details + actions)
@@ -186,6 +258,9 @@ struct HomeDetailView: View {
                 stat("lines.measurement.horizontal", "\(placed.room.walls.count) duvar")
                 if !placed.room.openings.isEmpty {
                     stat("door.left.hand.open", "\(placed.room.openings.count) açıklık")
+                }
+                if !placed.furniture.isEmpty {
+                    stat("sofa", "\(placed.furniture.count) eşya")
                 }
                 Spacer()
             }

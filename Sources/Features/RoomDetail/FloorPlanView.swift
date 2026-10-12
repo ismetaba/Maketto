@@ -2,7 +2,20 @@ import SwiftUI
 import UIKit
 
 /// Active editing tool when the plan is in edit mode.
-enum PlanTool: String, CaseIterable, Sendable { case move, delete }
+enum PlanTool: String, CaseIterable, Sendable {
+    /// Drag corners / furniture, tap to select walls and furniture.
+    case select
+    /// Drag to draw a new wall (ends join corners or split walls).
+    case draw
+    /// Tap a wall or a piece of furniture to delete it.
+    case erase
+}
+
+/// What is selected on the plan.
+enum PlanSelection: Hashable, Sendable {
+    case wall(UUID)
+    case furniture(UUID)
+}
 
 /// Blueprint-style top-down floor plan of ONE room (Maketto visual language).
 /// Tap a wall → it highlights and its measurement appears as a pill ON the model.
@@ -10,36 +23,53 @@ enum PlanTool: String, CaseIterable, Sendable { case move, delete }
 /// same `PlanCamera`. A dynamic metric grid sits behind. Per-room drawing is
 /// shared with the whole-home plan via `FloorPlanRenderer`.
 ///
-/// When `editing` is non-nil the plan enters edit mode: corner handles appear,
-/// dragging a handle moves every wall that joins there, and the active `editTool`
-/// routes taps (move = inspect, delete = remove a wall). Read mode (editing == nil)
-/// is byte-identical to before.
+/// When `editing` is non-nil the plan enters edit mode, rendered from that live
+/// graph: corner handles appear and `editTool` routes gestures (see PlanTool).
 struct FloorPlanView: View {
     let room: RoomModel
-    var showFurniture: Bool = false
-    /// When false (e.g. a library thumbnail) the plan is a static fitted render
-    /// with no gestures or controls.
+    var furniture: [PlacedFurniture] = []
+    var showScanObjects: Bool = false
+    /// When false (e.g. a thumbnail) the plan is a static fitted render with
+    /// no gestures or controls.
     var interactive: Bool = true
     /// External camera; when nil (thumbnails, previews) an internal one is used.
     var camera: PlanCamera?
-    /// Screen regions covered by floating chrome (top bar, docks); the
-    /// measurement pill is clamped inside these so it never renders off-screen
-    /// or under the chrome.
+    /// Screen regions covered by floating chrome (top bar, docks); pills are
+    /// clamped inside so they never render off-screen or under the chrome.
     var chromeInsets: EdgeInsets = EdgeInsets()
     /// Non-nil puts the plan in edit mode, rendered from this live graph.
     var editing: EditableRoom?
-    var editTool: PlanTool = .move
+    var editTool: PlanTool = .select
+    /// External selection; when nil the plan keeps its own.
+    var selection: Binding<PlanSelection?>?
 
     @State private var fallbackCamera = PlanCamera()
-    @State private var selectedWallID: UUID?
-    @State private var activeCorner: UUID?       // corner being dragged
-    @State private var panBase: CGSize?          // camera pan at drag start (pan mode)
+    @State private var localSelection: PlanSelection?
+    @State private var drag: ActiveDrag?
     @GestureState private var pinch: CGFloat = 1
     @GestureState private var dragLive: CGSize = .zero
     @Environment(\.colorScheme) private var colorScheme
 
+    /// One edit-mode drag, keyed by where it started so an abandoned gesture
+    /// (onEnded never delivered) can be detected and rolled back.
+    private struct ActiveDrag: Equatable {
+        var start: CGPoint
+        var kind: Kind
+        enum Kind: Equatable {
+            case corner(id: UUID, grab: Point2D)       // grab = corner − finger
+            case furniture(id: UUID, grab: Point2D)
+            case drawing(start: Point2D, end: Point2D)
+            case pan(base: CGSize)
+        }
+    }
+
     private var cam: PlanCamera { camera ?? fallbackCamera }
     private var dark: Bool { colorScheme == .dark }
+    private var currentSelection: PlanSelection? { selection?.wrappedValue ?? localSelection }
+
+    private func select(_ value: PlanSelection?) {
+        if let selection { selection.wrappedValue = value } else { localSelection = value }
+    }
 
     // Blueprint treatment palette (light / dark)
     private var cWall: Color { Color(light: Brand.evergreen, dark: Color(hex: 0xD9C088)) }
@@ -50,9 +80,10 @@ struct FloorPlanView: View {
     private var cPaper: Color { Brand.surface }
 
     var body: some View {
-        if PlanGeometry.worldBounds(room, includeObjects: showFurniture) == nil {
+        if PlanGeometry.worldBounds(room, includeObjects: showScanObjects) == nil {
             if interactive {
-                ContentUnavailableView("Plan yok", systemImage: "square.dashed")
+                ContentUnavailableView("Plan yok", systemImage: "square.dashed",
+                                       description: Text("Bu odada çizilecek duvar bulunamadı."))
             } else {
                 Color.clear
             }
@@ -62,12 +93,17 @@ struct FloorPlanView: View {
             let zoom = cam.zoom * pinch
             let pan = CGSize(width: cam.pan.width + dragLive.width,
                              height: cam.pan.height + dragLive.height)
-            let display = editing?.flattened() ?? room
-            let corners = editing.map { Array($0.corners.values) }
+            let scene = PlanScene(
+                display: editing?.flattened() ?? room,
+                items: editing?.furniture ?? furniture,
+                corners: editing.map { Array($0.corners.values) },
+                guides: editing?.snapGuides ?? .none,
+                selection: currentSelection,
+                drag: drag?.kind
+            )
             GeometryReader { geo in
                 AnimatedPlanCanvas(zoom: zoom, pan: pan) { context, size, z, p in
-                    draw(context, size: size, zoom: z, pan: p,
-                         display: display, corners: corners)
+                    draw(context, size: size, zoom: z, pan: p, scene: scene)
                 }
                 .contentShape(Rectangle())
                 .gesture(activeGesture(in: geo.size))
@@ -77,76 +113,147 @@ struct FloorPlanView: View {
                     }
                 )
             }
+            .accessibilityElement()
+            .accessibilityLabel("Kat planı")
+            .accessibilityValue(accessibilitySummary(scene.display, items: scene.items))
         } else {
             Canvas { context, size in
-                draw(context, size: size, zoom: 1, pan: .zero, display: room, corners: nil)
+                draw(context, size: size, zoom: 1, pan: .zero,
+                     scene: PlanScene(display: room, items: furniture, corners: nil,
+                                      guides: .none, selection: nil, drag: nil))
             }
             .allowsHitTesting(false)
+            .accessibilityHidden(true)
         }
+    }
+
+    /// Everything one frame draws, captured as plain values.
+    private struct PlanScene {
+        var display: RoomModel
+        var items: [PlacedFurniture]
+        var corners: [EditableRoom.Corner]?
+        var guides: EditableRoom.SnapGuides
+        var selection: PlanSelection?
+        var drag: ActiveDrag.Kind?
+    }
+
+    private func accessibilitySummary(_ room: RoomModel, items: [PlacedFurniture]) -> String {
+        var parts = ["\(MeasurementFormat.squareMeters(PlanGeometry.area(of: room)))",
+                     "\(room.walls.count) duvar"]
+        if !room.openings.isEmpty { parts.append("\(room.openings.count) açıklık") }
+        if !items.isEmpty { parts.append("\(items.count) eşya") }
+        return parts.joined(separator: ", ")
     }
 
     // MARK: - Gestures
 
     private func activeGesture(in size: CGSize) -> AnyGesture<Void> {
         if let editing {
-            return AnyGesture(editNavigationGesture(in: size, editing: editing).map { _ in () })
-        }
-        return AnyGesture(navigationGesture.map { _ in () })
-    }
-
-    private var navigationGesture: some Gesture {
-        MagnifyGesture()
-            .updating($pinch) { value, state, _ in state = value.magnification }
-            .onEnded { value in cam.commitPinch(value.magnification) }
-            .simultaneously(with:
-                DragGesture()
-                    .updating($dragLive) { value, state, _ in state = value.translation }
-                    .onEnded { value in cam.commitPan(value.translation) }
+            return AnyGesture(
+                MagnifyGesture()
+                    .updating($pinch) { value, state, _ in state = value.magnification }
+                    .onEnded { value in cam.commitPinch(value.magnification) }
+                    .simultaneously(with: editDragGesture(in: size, editing: editing))
+                    .map { _ in () }
             )
-    }
-
-    /// Edit-mode navigation: pinch still zooms; a drag grabs the nearest corner
-    /// (move tool) or pans the canvas. Pan is gated by `activeCorner` so the plan
-    /// never slides while a handle is being dragged.
-    private func editNavigationGesture(in size: CGSize, editing: EditableRoom) -> some Gesture {
-        MagnifyGesture()
-            .updating($pinch) { value, state, _ in state = value.magnification }
-            .onEnded { value in cam.commitPinch(value.magnification) }
-            .simultaneously(with: editDragGesture(in: size, editing: editing))
+        }
+        return AnyGesture(
+            MagnifyGesture()
+                .updating($pinch) { value, state, _ in state = value.magnification }
+                .onEnded { value in cam.commitPinch(value.magnification) }
+                .simultaneously(with:
+                    DragGesture()
+                        .updating($dragLive) { value, state, _ in state = value.translation }
+                        .onEnded { value in cam.commitPan(value.translation) }
+                )
+                .map { _ in () }
+        )
     }
 
     private func editDragGesture(in size: CGSize, editing: EditableRoom) -> some Gesture {
         DragGesture(minimumDistance: 2, coordinateSpace: .local)
             .onChanged { value in
-                if activeCorner == nil, panBase == nil {
-                    // Decide once: grab a corner (move tool) or start panning.
-                    if editTool == .move,
-                       let w = worldPoint(value.startLocation, in: size),
-                       let cid = editing.corner(near: w, within: worldRadius(26, in: size)) {
-                        activeCorner = cid
-                        editing.beginCornerDrag()
-                        Haptics.light()
-                    } else {
-                        panBase = cam.pan
-                    }
+                if drag == nil || drag?.start != value.startLocation {
+                    abandonDrag(editing)          // a previous gesture never ended
+                    drag = ActiveDrag(start: value.startLocation,
+                                      kind: beginDrag(at: value.startLocation, in: size, editing: editing))
                 }
-                if let cid = activeCorner, let w = worldPoint(value.location, in: size) {
-                    editing.dragCorner(cid, to: w)
-                } else if let base = panBase {
+                guard let current = drag, let w = worldPoint(value.location, in: size) else { return }
+                switch current.kind {
+                case .corner(let id, let grab):
+                    editing.dragCorner(id, to: w + grab, snapTolerance: worldRadius(9, in: size))
+                case .furniture(let id, let grab):
+                    editing.dragFurniture(id, to: w + grab, snapTolerance: worldRadius(10, in: size))
+                case .drawing(let start, _):
+                    let (end, guides) = editing.snapped(w, tolerance: worldRadius(9, in: size),
+                                                        extraAnchors: [start])
+                    editing.setGuides(guides)
+                    drag?.kind = .drawing(start: start, end: end)
+                case .pan(let base):
                     cam.pan = CGSize(width: base.width + value.translation.width,
                                      height: base.height + value.translation.height)
                 }
             }
             .onEnded { value in
-                if let cid = activeCorner {
-                    editing.endCornerDrag(cid)
-                    activeCorner = nil
-                } else if let base = panBase {
+                guard let current = drag else { return }
+                drag = nil
+                switch current.kind {
+                case .corner(let id, _):
+                    editing.endCornerDrag(id, weldRadius: worldRadius(14, in: size))
+                case .furniture:
+                    editing.endFurnitureDrag()
+                case .drawing(let start, let end):
+                    editing.setGuides(.none)
+                    if let id = editing.addWall(from: start, to: end, snapRadius: worldRadius(18, in: size)) {
+                        select(.wall(id))
+                        Haptics.success()
+                    }
+                case .pan(let base):
                     cam.pan = CGSize(width: base.width + value.translation.width,
                                      height: base.height + value.translation.height)
-                    panBase = nil
                 }
             }
+    }
+
+    /// Decide once per gesture what a drag does.
+    private func beginDrag(at start: CGPoint, in size: CGSize, editing: EditableRoom) -> ActiveDrag.Kind {
+        guard let w = worldPoint(start, in: size) else { return .pan(base: cam.pan) }
+        switch editTool {
+        case .select:
+            if let cid = editing.corner(near: w, within: worldRadius(26, in: size)),
+               let p = editing.cornerPosition(cid) {
+                editing.beginCornerDrag()
+                Haptics.light()
+                return .corner(id: cid, grab: p - w)
+            }
+            if let fid = editing.furnitureID(at: w, slop: worldRadius(6, in: size)),
+               let item = editing.furnitureItem(fid) {
+                editing.beginFurnitureDrag()
+                select(.furniture(fid))
+                Haptics.light()
+                return .furniture(id: fid, grab: item.center - w)
+            }
+            return .pan(base: cam.pan)
+        case .draw:
+            let anchor = editing.corner(near: w, within: worldRadius(22, in: size))
+                .flatMap { editing.cornerPosition($0) }
+            let start = anchor ?? editing.snapped(w, tolerance: worldRadius(9, in: size)).0
+            Haptics.light()
+            return .drawing(start: start, end: start)
+        case .erase:
+            return .pan(base: cam.pan)
+        }
+    }
+
+    /// Roll back a drag whose gesture was cancelled without `onEnded`.
+    private func abandonDrag(_ editing: EditableRoom) {
+        guard let current = drag else { return }
+        drag = nil
+        switch current.kind {
+        case .corner, .furniture: editing.cancelDrag()
+        case .drawing: editing.setGuides(.none)
+        case .pan: break
+        }
     }
 
     // MARK: - Transform (shared by draw + hit-test)
@@ -154,7 +261,7 @@ struct FloorPlanView: View {
     // The fit frame always uses the immutable `room`, so the plan never re-centres
     // under the finger while live geometry is being edited.
     private func planTransform(in size: CGSize) -> PlanGeometry.Transform? {
-        PlanGeometry.fit(room, in: size, padding: 28, maxScale: 240, includeObjects: showFurniture)
+        PlanGeometry.fit(room, in: size, padding: 28, maxScale: 240, includeObjects: showScanObjects)
             .map { $0.composed(in: size, zoom: cam.zoom * pinch,
                                pan: CGSize(width: cam.pan.width + dragLive.width,
                                            height: cam.pan.height + dragLive.height)) }
@@ -172,37 +279,47 @@ struct FloorPlanView: View {
 
     private func handleTap(at point: CGPoint, in size: CGSize) {
         guard let world = worldPoint(point, in: size) else { return }
-        if let editing {
-            switch editTool {
-            case .delete:
-                if let id = editing.wall(near: world, within: worldRadius(26, in: size)) {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                        if selectedWallID == id { selectedWallID = nil }
-                        editing.deleteWall(id)
-                    }
-                    Haptics.light()
-                }
-            case .move:
-                selectClosestWall(to: world, among: editing.materializedWalls(),
-                                  within: worldRadius(26, in: size))
-            }
-        } else {
-            selectClosestWall(to: world, among: room.walls, within: 0.5)
-        }
-    }
+        let radius = worldRadius(24, in: size)
+        let walls = editing?.materializedWalls() ?? room.walls
+        let items = editing?.furniture ?? furniture
 
-    private func selectClosestWall(to world: Point2D, among walls: [Wall], within: Double) {
+        if let editing, editTool == .erase {
+            if let fid = editing.furnitureID(at: world, slop: worldRadius(4, in: size)) {
+                withAnimation(.maketto) {
+                    if currentSelection == .furniture(fid) { select(nil) }
+                    editing.deleteFurniture(fid)
+                }
+                Haptics.light()
+            } else if let id = editing.wall(near: world, within: radius) {
+                withAnimation(.maketto) {
+                    if currentSelection == .wall(id) { select(nil) }
+                    editing.deleteWall(id)
+                }
+                Haptics.light()
+            }
+            return
+        }
+        if editing != nil, editTool == .draw { return }
+
+        // Furniture first (it sits on top), then the closest wall.
+        if let item = items.last(where: { FurnitureGeometry.contains($0, world, slop: worldRadius(4, in: size)) }) {
+            withAnimation(.maketto) {
+                select(currentSelection == .furniture(item.id) ? nil : .furniture(item.id))
+            }
+            Haptics.selection()
+            return
+        }
         var best: (id: UUID, dist: Double)?
         for wall in walls {
             let d = FloorGeometry.distance(from: world, to: wall)
-            if best == nil || d < best!.dist { best = (wall.id, d) }
+            if best.map({ d < $0.dist }) ?? true { best = (wall.id, d) }
         }
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-            if let best, best.dist < within {
-                selectedWallID = (selectedWallID == best.id) ? nil : best.id
+        withAnimation(.maketto) {
+            if let best, best.dist < radius {
+                select(currentSelection == .wall(best.id) ? nil : .wall(best.id))
                 Haptics.selection()
             } else {
-                selectedWallID = nil
+                select(nil)
             }
         }
     }
@@ -210,74 +327,136 @@ struct FloorPlanView: View {
     // MARK: - Drawing
 
     private func draw(_ context: GraphicsContext, size: CGSize, zoom: CGFloat, pan: CGSize,
-                      display: RoomModel, corners: [EditableRoom.Corner]?) {
+                      scene: PlanScene) {
         context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(cPaper))
-        // Fit to the immutable `room` for a stable frame; render live `display`.
+        // Fit to the immutable `room` for a stable frame; render the live scene.
         guard let base = PlanGeometry.fit(room, in: size, padding: 28, maxScale: 240,
-                                          includeObjects: showFurniture) else { return }
+                                          includeObjects: showScanObjects) else { return }
         let t = base.composed(in: size, zoom: zoom, pan: pan)
+        let clamp = CGRect(x: chromeInsets.leading + 6, y: chromeInsets.top + 6,
+                           width: max(size.width - chromeInsets.leading - chromeInsets.trailing - 12, 1),
+                           height: max(size.height - chromeInsets.top - chromeInsets.bottom - 12, 1))
 
-        FloorPlanRenderer.drawGrid(context, size: size, t: t, dark: dark)
-
-        let ink = PlanInk(paper: cPaper, floor: cFloor, wall: cWall, door: cDoor, window: cWindow)
-        FloorPlanRenderer.drawRoom(display, into: context, t: t, ink: ink, showFurniture: showFurniture)
-
-        if let id = selectedWallID, let wall = display.walls.first(where: { $0.id == id }) {
-            drawSelection(context, size: size, wall: wall, t: t,
-                          centroid: PlanGeometry.centroid(display))
+        if interactive {
+            FloorPlanRenderer.drawGrid(context, size: size, t: t, dark: dark)
         }
 
-        if let corners { drawHandles(context, corners: corners, t: t) }
+        let ink = PlanInk(paper: cPaper, floor: cFloor, wall: cWall, door: cDoor, window: cWindow)
+        FloorPlanRenderer.drawRoom(scene.display, into: context, t: t, ink: ink,
+                                   showScanObjects: showScanObjects)
+
+        var selectedFurniture: UUID?
+        if case .furniture(let id) = scene.selection { selectedFurniture = id }
+        FloorPlanRenderer.drawFurniture(scene.items, into: context, t: t, dark: dark,
+                                        selectedID: selectedFurniture, selectionColor: cSel,
+                                        labels: interactive)
+
+        drawGuides(context, size: size, guides: scene.guides, t: t)
+
+        let centroid = PlanGeometry.centroid(scene.display)
+        if case .wall(let id) = scene.selection,
+           let wall = scene.display.walls.first(where: { $0.id == id }) {
+            drawWallSelection(context, wall: wall, t: t, centroid: centroid, clamp: clamp)
+        }
+        if let id = selectedFurniture, let item = scene.items.first(where: { $0.id == id }) {
+            let bottom = FurnitureGeometry.footprint(item).map { t.apply($0).y }.max() ?? 0
+            FloorPlanRenderer.drawPill(context, text: item.sizeLabel,
+                                       at: CGPoint(x: t.apply(item.center).x, y: bottom + 18),
+                                       fill: cSel, fontSize: 12, within: clamp)
+        }
+
+        if let corners = scene.corners, editTool != .erase {
+            drawHandles(context, corners: corners, t: t, drag: scene.drag)
+        }
+        if case .corner(let id, _) = scene.drag, let editing {
+            for wall in editing.walls(at: id) {
+                drawLiveLength(context, wall: wall, t: t, centroid: centroid, clamp: clamp)
+            }
+        }
+        if case .drawing(let start, let end) = scene.drag {
+            drawWallPreview(context, from: start, to: end, t: t, clamp: clamp)
+        }
     }
 
     private func drawHandles(_ context: GraphicsContext, corners: [EditableRoom.Corner],
-                             t: PlanGeometry.Transform) {
+                             t: PlanGeometry.Transform, drag: ActiveDrag.Kind?) {
+        var active: UUID?
+        if case .corner(let id, _) = drag { active = id }
+        let small = editTool == .draw
         for corner in corners {
             let p = t.apply(corner.p)
-            let r: CGFloat = corner.id == activeCorner ? 9 : 6
+            let r: CGFloat = corner.id == active ? 9 : (small ? 4.5 : 6)
             let rect = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
             context.fill(Circle().path(in: rect), with: .color(cPaper))
             context.stroke(Circle().path(in: rect), with: .color(cSel),
-                           style: StrokeStyle(lineWidth: corner.id == activeCorner ? 3 : 2.5))
+                           style: StrokeStyle(lineWidth: corner.id == active ? 3 : 2.5))
         }
     }
 
-    private func drawSelection(_ context: GraphicsContext, size: CGSize, wall: Wall,
-                               t: PlanGeometry.Transform, centroid: Point2D) {
+    /// Dashed alignment guides across the canvas while a drag is snapped.
+    private func drawGuides(_ context: GraphicsContext, size: CGSize,
+                            guides: EditableRoom.SnapGuides, t: PlanGeometry.Transform) {
+        let style = StrokeStyle(lineWidth: 1, dash: [6, 5])
+        if let x = guides.x {
+            let sx = t.apply(Point2D(x: x, z: 0)).x
+            var p = Path(); p.move(to: CGPoint(x: sx, y: 0)); p.addLine(to: CGPoint(x: sx, y: size.height))
+            context.stroke(p, with: .color(cSel.opacity(0.7)), style: style)
+        }
+        if let z = guides.z {
+            let sy = t.apply(Point2D(x: 0, z: z)).y
+            var p = Path(); p.move(to: CGPoint(x: 0, y: sy)); p.addLine(to: CGPoint(x: size.width, y: sy))
+            context.stroke(p, with: .color(cSel.opacity(0.7)), style: style)
+        }
+    }
+
+    private func drawWallSelection(_ context: GraphicsContext, wall: Wall, t: PlanGeometry.Transform,
+                                   centroid: Point2D, clamp: CGRect) {
         let a = t.apply(wall.start), b = t.apply(wall.end)
         var hl = Path(); hl.move(to: a); hl.addLine(to: b)
         let wpt = max(t.points(wall.thickness), 3) + 5
         context.stroke(hl, with: .color(cSel.opacity(0.92)),
                        style: StrokeStyle(lineWidth: wpt, lineCap: .round))
-
-        let d = PlanGeometry.dimensionLabel(for: wall, interiorReference: centroid,
-                                            text: MeasurementFormat.meters(wall.length))
-        let mid = t.apply(d.midpoint)
-        let nTip = t.apply(d.midpoint + d.outwardNormal)
-        var nx = nTip.x - mid.x, ny = nTip.y - mid.y
-        let nl = hypot(nx, ny); if nl > 0 { nx /= nl; ny /= nl }
-
-        let resolved = context.resolve(
-            Text(d.text).font(.system(size: 14, weight: .heavy)).foregroundColor(.white)
-        )
-        let ts = resolved.measure(in: CGSize(width: 240, height: 60))
-        let w = ts.width + 22, h = ts.height + 12
-
-        // Clamp the pill inside the visible, chrome-free region so an outer
-        // wall's measurement never renders off-screen or under the bars.
-        var pillCenter = CGPoint(x: mid.x + nx * 28, y: mid.y + ny * 28)
-        let minX = chromeInsets.leading + w / 2 + 6
-        let maxX = size.width - chromeInsets.trailing - w / 2 - 6
-        let minY = chromeInsets.top + h / 2 + 6
-        let maxY = size.height - chromeInsets.bottom - h / 2 - 6
-        if minX < maxX { pillCenter.x = min(max(pillCenter.x, minX), maxX) }
-        if minY < maxY { pillCenter.y = min(max(pillCenter.y, minY), maxY) }
-
-        let rect = CGRect(x: pillCenter.x - w / 2, y: pillCenter.y - h / 2, width: w, height: h)
-        context.fill(Capsule().path(in: rect), with: .color(cSel))
-        context.draw(resolved, at: pillCenter, anchor: .center)
+        FloorPlanRenderer.drawPill(context, text: MeasurementFormat.meters(wall.length),
+                                   at: outwardPoint(wall, t: t, centroid: centroid, distance: 28),
+                                   fill: cSel, fontSize: 14, within: clamp)
     }
 
+    /// Smaller live length pill for the walls moving with a dragged corner.
+    private func drawLiveLength(_ context: GraphicsContext, wall: Wall, t: PlanGeometry.Transform,
+                                centroid: Point2D, clamp: CGRect) {
+        FloorPlanRenderer.drawPill(context, text: MeasurementFormat.meters(wall.length),
+                                   at: outwardPoint(wall, t: t, centroid: centroid, distance: 22),
+                                   fill: cWall.opacity(0.9), fontSize: 12, within: clamp)
+    }
+
+    private func drawWallPreview(_ context: GraphicsContext, from start: Point2D, to end: Point2D,
+                                 t: PlanGeometry.Transform, clamp: CGRect) {
+        let a = t.apply(start), b = t.apply(end)
+        var p = Path(); p.move(to: a); p.addLine(to: b)
+        context.stroke(p, with: .color(cSel), style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [8, 6]))
+        for q in [a, b] {
+            let rect = CGRect(x: q.x - 5, y: q.y - 5, width: 10, height: 10)
+            context.fill(Circle().path(in: rect), with: .color(cSel))
+        }
+        let length = start.distance(to: end)
+        if length >= 0.05 {
+            let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - 22)
+            FloorPlanRenderer.drawPill(context, text: MeasurementFormat.meters(length),
+                                       at: mid, fill: cSel, fontSize: 13, within: clamp)
+        }
+    }
+
+    /// Screen point `distance` pts outside the wall's midpoint (away from the room).
+    private func outwardPoint(_ wall: Wall, t: PlanGeometry.Transform, centroid: Point2D,
+                              distance: CGFloat) -> CGPoint {
+        let d = PlanGeometry.dimensionLabel(for: wall, interiorReference: centroid)
+        let mid = t.apply(d.midpoint)
+        let tip = t.apply(d.midpoint + d.outwardNormal)
+        var nx = tip.x - mid.x, ny = tip.y - mid.y
+        let nl = hypot(nx, ny)
+        if nl > 0 { nx /= nl; ny /= nl }
+        return CGPoint(x: mid.x + nx * distance, y: mid.y + ny * distance)
+    }
 }
 
 #Preview("Rectangle") {
@@ -286,8 +465,11 @@ struct FloorPlanView: View {
         .background(Brand.surface)
 }
 
-#Preview("L-shaped") {
-    FloorPlanView(room: .mockLShaped)
-        .frame(height: 360)
-        .background(Brand.surface)
+#Preview("L-shaped + furniture") {
+    FloorPlanView(room: .mockLShaped, furniture: [
+        FurnitureCatalog.presets[0].instantiate(at: Point2D(x: 3.6, z: 3.8), rotation: .pi),
+        FurnitureCatalog.presets[11].instantiate(at: Point2D(x: 1.2, z: 1.0)),
+    ])
+    .frame(height: 420)
+    .background(Brand.surface)
 }

@@ -187,8 +187,14 @@ extension PlacedFurniture {
             depth: max(object.depth, 0.1),
             height: max(object.height, 0.05),
             rotation: object.rotation,
-            templateID: "detected.\(object.category)"
+            templateID: Self.detectedTemplateID(object)
         )
+    }
+
+    /// Marks a piece as imported from a specific scanned object, so the same
+    /// object is never imported twice.
+    static func detectedTemplateID(_ object: DetectedObject) -> String {
+        "detected.\(object.id.uuidString)"
     }
 
     static func category(forDetected raw: String) -> FurnitureCategory {
