@@ -6,6 +6,7 @@ import SwiftUI
 struct ScanReviewView: View {
     let onSave: ([RoomModel], String) -> Bool
     let onRescan: () -> Void
+    let onDiscard: () -> Void
 
     @State private var rooms: [RoomModel]
     /// The auto-assigned name per room — a name still matching it was never
@@ -15,6 +16,7 @@ struct ScanReviewView: View {
     @State private var selectedRoomID: UUID?
     @State private var saveFailed = false
     @State private var showRescanConfirm = false
+    @State private var showDiscardConfirm = false
     @State private var removeTarget: RoomModel?
     @State private var isSaving = false
     @State private var camera = PlanCamera()
@@ -23,12 +25,15 @@ struct ScanReviewView: View {
     private enum Field: Hashable { case roomName, homeName }
 
     init(rooms: [RoomModel],
-         onSave: @escaping ([RoomModel], String) -> Bool, onRescan: @escaping () -> Void) {
+         onSave: @escaping ([RoomModel], String) -> Bool,
+         onRescan: @escaping () -> Void,
+         onDiscard: @escaping () -> Void) {
         _rooms = State(initialValue: rooms)
         _autoNames = State(initialValue: Dictionary(rooms.map { ($0.id, $0.name) },
                                                     uniquingKeysWith: { a, _ in a }))
         self.onSave = onSave
         self.onRescan = onRescan
+        self.onDiscard = onDiscard
     }
 
     private var totalArea: Double { rooms.reduce(0) { $0 + PlanGeometry.area(of: $1) } }
@@ -79,6 +84,13 @@ struct ScanReviewView: View {
         } message: {
             Text("Bu tarama ve yaptığınız tüm düzenlemeler silinir.")
         }
+        .confirmationDialog("Tarama kaydedilmeden çıkılsın mı?", isPresented: $showDiscardConfirm,
+                            titleVisibility: .visible) {
+            Button("Kaydetmeden Çık", role: .destructive) { onDiscard() }
+            Button("Vazgeç", role: .cancel) {}
+        } message: {
+            Text("Bu tarama silinir.")
+        }
         .confirmationDialog("\u{201C}\(removeTarget?.name ?? "")\u{201D} kaldırılsın mı?",
                             isPresented: removePresented, titleVisibility: .visible) {
             Button("Odayı Kaldır", role: .destructive) {
@@ -117,16 +129,18 @@ struct ScanReviewView: View {
 
     // MARK: - Pieces
 
-    /// Rescan on the left, scan summary centred, ghost slot balancing the row.
+    /// Exit on the left, scan summary centred, rescan on the right.
     private var topRow: some View {
         HStack(spacing: 8) {
-            CircleIconButton("arrow.counterclockwise", accessibilityLabel: "Yeniden tara") {
-                showRescanConfirm = true
+            CircleIconButton("xmark", accessibilityLabel: "Kaydetmeden çık") {
+                showDiscardConfirm = true
             }
             Spacer()
             summaryPill
             Spacer()
-            Color.clear.frame(width: 40, height: 40)
+            CircleIconButton("arrow.counterclockwise", accessibilityLabel: "Yeniden tara") {
+                showRescanConfirm = true
+            }
         }
         .padding(.horizontal, 12)
         .padding(.top, 6)
@@ -285,6 +299,6 @@ struct ScanReviewView: View {
             { var r = RoomModel.mockLShaped; r.kind = .livingRoom; return r }(),
             { var r = HomeGeometry.transform(.mock, by: Pose2D(translation: Point2D(x: 5.2, z: 0))); r.kind = .bedroom; return r }()
         ]),
-        onSave: { _, _ in true }, onRescan: {}
+        onSave: { _, _ in true }, onRescan: {}, onDiscard: {}
     )
 }

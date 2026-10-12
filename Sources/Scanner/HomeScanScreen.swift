@@ -56,7 +56,8 @@ struct HomeScanScreen: View {
                     router.push(.homeDetail(id))
                     return true
                 },
-                onRescan: { scanner.reset() }
+                onRescan: { scanner.reset() },
+                onDiscard: { router.pop() }
             )
         case .failed(let message):
             messageScreen(icon: "exclamationmark.triangle", title: "Tarama başarısız",
