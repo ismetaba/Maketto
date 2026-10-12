@@ -10,6 +10,7 @@ struct HomeListView: View {
     @State private var renameTarget: HomeSummary?
     @State private var renameText = ""
     @State private var deleteTarget: HomeSummary?
+    @State private var showAbout = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -29,6 +30,7 @@ struct HomeListView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
+        .sheet(isPresented: $showAbout) { AboutSheet() }
         .renameAlert("Evi Yeniden Adlandır", placeholder: "Ev adı",
                      isPresented: renamePresented, text: $renameText) {
             if let target = renameTarget { store.renameHome(id: target.id, to: renameText) }
@@ -65,7 +67,16 @@ struct HomeListView: View {
                 Text("Evlerim").font(.display(34)).foregroundStyle(Brand.textPrimary)
             }
             Spacer()
-            MakettoLogo(size: 40)
+            Button { showAbout = true } label: {
+                Image(systemName: "questionmark")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Brand.textPrimary)
+                    .frame(width: 40, height: 40)
+                    .background(Brand.card, in: Circle())
+                    .overlay(Circle().strokeBorder(Brand.hairline, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Tarama ipuçları ve hakkında")
         }
         .padding(.horizontal, 22)
         .padding(.top, 6)
@@ -133,7 +144,11 @@ struct HomeListView: View {
                     Label("Evi Tara", systemImage: "viewfinder")
                 }
                 .buttonStyle(ClayButtonStyle()).padding(.top, 28)
-                Overline("LiDAR · iPhone Pro", color: Brand.textFaint).padding(.top, 16)
+                Button("İyi bir tarama için ipuçları") { showAbout = true }
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Brand.clay)
+                    .padding(.top, 14)
+                Overline("LiDAR · iPhone Pro / iPad Pro", color: Brand.textFaint).padding(.top, 12)
             }
             .frame(maxWidth: .infinity)
         }
