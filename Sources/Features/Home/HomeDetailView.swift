@@ -39,6 +39,12 @@ struct HomeDetailView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
+        #if DEBUG
+        .onAppear {
+            if DemoLaunch.is(.homeRoom) { selectedRoomID = home?.orderedRooms.first?.id }
+            if DemoLaunch.is(.home3D) { show3D = true }
+        }
+        #endif
         .sheet(item: $share) { item in
             ShareSheet(item: item).ignoresSafeArea()
         }

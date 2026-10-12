@@ -31,6 +31,9 @@ struct HomeListView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showAbout) { AboutSheet() }
+        #if DEBUG
+        .onAppear { if DemoLaunch.is(.about) { showAbout = true } }
+        #endif
         .renameAlert("Evi Yeniden Adlandır", placeholder: "Ev adı",
                      isPresented: renamePresented, text: $renameText) {
             if let target = renameTarget { store.renameHome(id: target.id, to: renameText) }

@@ -71,6 +71,39 @@ struct RoomDetailView: View {
 
     private var isEditing: Bool { editable != nil }
 
+    #if DEBUG
+    @State private var showDemoCreator = false
+
+    /// Screenshot / UI-review states (see DemoLaunch).
+    private func applyDemoState() {
+        guard let screen = DemoLaunch.screen else { return }
+        switch screen {
+        case .room3D:
+            planMode = .threeD
+        case .edit:
+            enterEdit()
+        case .editFurniture:
+            enterEdit()
+            if let item = editable?.furniture.first(where: { $0.shape == .lShape }) ?? editable?.furniture.first {
+                selection = .furniture(item.id)
+            }
+        case .editWall:
+            enterEdit()
+            if let wall = editable?.materializedWalls().max(by: { $0.length < $1.length }) {
+                selection = .wall(wall.id)
+            }
+        case .catalog:
+            enterEdit(openCatalog: true)
+        case .creator:
+            showDemoCreator = true
+        case .versions:
+            showVersions = true
+        default:
+            break
+        }
+    }
+    #endif
+
     var body: some View {
         let document = store.document(for: roomID)
         ZStack {
@@ -83,6 +116,10 @@ struct RoomDetailView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
+        #if DEBUG
+        .onAppear { applyDemoState() }
+        .sheet(isPresented: $showDemoCreator) { FurnitureCreatorSheet { _ in } }
+        #endif
         .sheet(isPresented: $showCatalog) {
             FurnitureCatalogSheet(
                 importableCount: editable.map { importableObjects($0).count } ?? 0,

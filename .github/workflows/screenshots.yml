@@ -1,0 +1,30 @@
+name: Screenshots
+
+# Photographs every screen (DEBUG demo mode) on a large and a small iPhone in
+# light and dark mode, for UI review. Artifacts are kept for a week.
+on:
+  push:
+    branches: ["claude/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: shots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Capture
+        run: bash scripts/screenshots.sh screenshots
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screenshots
+          retention-days: 7

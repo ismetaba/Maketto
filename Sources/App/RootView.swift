@@ -6,7 +6,20 @@ struct RootView: View {
 
     var body: some View {
         @Bindable var router = router
-        NavigationStack(path: $router.path) {
+        #if DEBUG
+        if DemoLaunch.is(.scanReview) {
+            ScanReviewView(rooms: DemoContent.reviewRooms(), onSave: { _, _ in false },
+                           onRescan: {}, onDiscard: {})
+        } else {
+            stack(router: $router.path)
+        }
+        #else
+        stack(router: $router.path)
+        #endif
+    }
+
+    private func stack(router path: Binding<[Route]>) -> some View {
+        NavigationStack(path: path) {
             HomeListView()
                 .navigationDestination(for: Route.self) { route in
                     switch route {

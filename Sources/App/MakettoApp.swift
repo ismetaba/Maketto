@@ -13,6 +13,38 @@ struct MakettoApp: App {
 
     init() {
         let schema = Schema(versionedSchema: SchemaV1.self)
+        #if DEBUG
+        if DemoLaunch.isActive {
+            // Screenshot / UI-review launch: throw-away store, seeded content.
+            let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            let container = try! ModelContainer(for: schema, configurations: [memory])
+            let store = RoomStore(modelContext: container.mainContext, owning: container)
+            let library = FurnitureLibrary(fileURL: nil)
+            let router = Router()
+            if !DemoLaunch.is(.empty) {
+                let seeded = DemoContent.seed(store, library: library)
+                if let home = seeded.homeID, let room = seeded.roomID {
+                    switch DemoLaunch.screen {
+                    case .home, .homeRoom, .home3D:
+                        router.path = [.homeDetail(home)]
+                    case .room, .room3D, .edit, .editFurniture, .editWall, .catalog, .creator, .versions:
+                        router.path = [.homeDetail(home), .roomDetail(room)]
+                    case .scan:
+                        router.path = [.scanHome]
+                    default:
+                        break
+                    }
+                }
+            }
+            modelContainer = container
+            storeIsPersistent = false
+            _showStoreAlert = State(initialValue: false)
+            _roomStore = State(initialValue: store)
+            _furnitureLibrary = State(initialValue: library)
+            _router = State(initialValue: router)
+            return
+        }
+        #endif
         let container: ModelContainer
         var failed = false
         do {
