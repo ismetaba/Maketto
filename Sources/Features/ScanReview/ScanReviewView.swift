@@ -45,7 +45,8 @@ struct ScanReviewView: View {
         ZStack {
             Brand.surface.ignoresSafeArea()
 
-            WholeHomePlanView(rooms: rooms, selectedRoomID: selectedRoomID, camera: camera) { id in
+            WholeHomePlanView(rooms: rooms, selectedRoomID: selectedRoomID, camera: camera,
+                              focusInsets: EdgeInsets(top: 110, leading: 12, bottom: 330, trailing: 64)) { id in
                 focusedField = nil
                 withAnimation(.maketto) { selectedRoomID = id }
                 if id != nil { Haptics.selection() }
@@ -264,7 +265,8 @@ struct ScanReviewView: View {
         // Refresh the default name only while it is still the auto-assigned
         // one — a name the user typed is never overwritten.
         if room.name == autoNames[room.id] {
-            let fresh = RoomNaming.defaultName(for: kind)
+            let fresh = RoomNaming.uniqueName(for: kind,
+                                              taken: Set(rooms.filter { $0.id != room.id }.map(\.name)))
             rooms[idx].name = fresh
             autoNames[room.id] = fresh
         }

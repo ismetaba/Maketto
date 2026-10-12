@@ -220,6 +220,13 @@ struct RoomNamingTests {
         #expect(named[2].name == "Mutfak")
     }
 
+    @Test func uniqueNamesNeverCollide() {
+        #expect(RoomNaming.uniqueName(for: .bedroom, taken: ["Salon"]) == "Yatak Odası")
+        #expect(RoomNaming.uniqueName(for: .bedroom, taken: ["Yatak Odası"]) == "Yatak Odası 2")
+        #expect(RoomNaming.uniqueName(for: .bedroom, taken: ["Yatak Odası 1", "Yatak Odası 2"])
+                == "Yatak Odası 3")
+    }
+
     @Test func kindIsInferredFromObjects() {
         let room = RoomModel(name: "", detectedObjects: [
             DetectedObject(category: "toilet", center: Point2D(x: 0, z: 0),

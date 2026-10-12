@@ -26,6 +26,11 @@ struct RoomStoreTests {
         #expect(store.homes[0].roomCount == 2)
         let home = try #require(store.homeModel(for: id))
         #expect(home.rooms.map(\.name) == ["Salon", "Yatak Odası"])
+        // The map, chips, cards and navigation all use the same (Room) id.
+        #expect(home.roomsInHomeFrame.map(\.id) == home.orderedRooms.map(\.id))
+        for placed in home.rooms {
+            #expect(store.document(for: placed.id)?.room.id == placed.id)
+        }
         // The display frame is straightened to the axes.
         for wall in home.rooms[0].room.walls { #expect(PlanGeometry.offAxis(wall) < 1e-6) }
     }
@@ -35,7 +40,7 @@ struct RoomStoreTests {
         let roomID = try #require(store.homeModel(for: homeID)?.rooms.first?.id)
         let original = try #require(store.document(for: roomID))
         #expect(original.versionNumber == 1)
-        #expect(original.versionLabel == "Sürüm 1")
+        #expect(original.versionLabel == RoomStore.firstVersionLabel)
 
         // Edit in the display frame: stretch a wall and add furniture.
         let editor = EditableRoom(original.room, furniture: original.furniture)
@@ -52,7 +57,7 @@ struct RoomStoreTests {
         let edited = try #require(store.document(for: roomID))
         #expect(edited.versionNumber == 2)
         #expect(edited.versionCount == 2)
-        #expect(edited.versionLabel == "Sürüm 2")
+        #expect(edited.versionLabel == RoomStore.editVersionLabel)
         // The round trip through the raw frame is rigid: lengths, and the
         // sofa's position relative to the wall it was placed by, survive.
         // (The display frame itself may re-centre when the home's bounds change.)
@@ -110,6 +115,12 @@ struct RoomStoreTests {
         #expect(store.deleteHome(id: homeID))
         #expect(store.homes.isEmpty)
         #expect(store.homeModel(for: homeID) == nil)
+    }
+
+    @Test func legacyLabelsReadInTurkish() {
+        #expect(RoomStore.displayLabel("Version 3") == "Sürüm 3")
+        #expect(RoomStore.displayLabel("Version x") == "Version x")
+        #expect(RoomStore.displayLabel("Mutfak yenileme") == "Mutfak yenileme")
     }
 
     @Test func emptyScanIsRejected() {

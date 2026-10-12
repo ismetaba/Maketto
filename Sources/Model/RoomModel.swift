@@ -220,4 +220,11 @@ public struct RoomModel: Codable, Hashable, Identifiable, Sendable {
     }
 
     public func wall(_ id: UUID) -> Wall? { walls.first { $0.id == id } }
+
+    /// The same room under another identity (e.g. its persisted Room's id).
+    public func withID(_ id: UUID) -> RoomModel {
+        RoomModel(id: id, name: name, createdAt: createdAt, unit: unit, walls: walls,
+                  openings: openings, detectedObjects: detectedObjects,
+                  floorOutline: floorOutline, source: source, kind: kind)
+    }
 }

@@ -94,6 +94,13 @@ struct HomeListView: View {
                             onDelete: { deleteTarget = home })
                         .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                         .onTapGesture { router.push(.homeDetail(home.id)) }
+                        // VoiceOver: one button per card, with its menu as actions.
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityHint("Ev haritasını açar")
+                        .accessibilityAction { router.push(.homeDetail(home.id)) }
+                        .accessibilityAction(named: "Yeniden Adlandır") { beginRename(home) }
+                        .accessibilityAction(named: "Evi Sil") { deleteTarget = home }
                         .contextMenu {
                             Button { beginRename(home) } label: {
                                 Label("Yeniden Adlandır", systemImage: "pencil")

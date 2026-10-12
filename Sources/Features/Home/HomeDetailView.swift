@@ -81,7 +81,8 @@ struct HomeDetailView: View {
                     rooms: home.roomsInHomeFrame,
                     furniture: home.furnitureInHomeFrame,
                     selectedRoomID: selectedRoomID,
-                    camera: camera
+                    camera: camera,
+                    focusInsets: EdgeInsets(top: 116, leading: 12, bottom: 360, trailing: 64)
                 ) { id in
                     withAnimation(.maketto) { selectedRoomID = id }
                     if id != nil { Haptics.selection() }
@@ -134,8 +135,10 @@ struct HomeDetailView: View {
                 } label: {
                     Label("Evi Yeniden Adlandır", systemImage: "pencil")
                 }
-                Button { camera.reset() } label: {
-                    Label("Haritaya Sığdır", systemImage: "viewfinder")
+                Button {
+                    if show3D { sceneResetToken += 1 } else { camera.reset() }
+                } label: {
+                    Label(show3D ? "Görünümü Sıfırla" : "Haritaya Sığdır", systemImage: "viewfinder")
                 }
                 Button { sharePlan(home) } label: {
                     Label("Planı Paylaş", systemImage: "square.and.arrow.up")

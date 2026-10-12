@@ -16,6 +16,16 @@ public enum RoomNaming {
         }
     }
 
+    /// The kind's default name, numbered ("Yatak Odası 2") when another room
+    /// already uses it.
+    public static func uniqueName(for kind: RoomKind, taken: Set<String>) -> String {
+        let base = defaultName(for: kind)
+        if !taken.contains(base) && !taken.contains("\(base) 1") { return base }
+        var n = 2
+        while taken.contains("\(base) \(n)") { n += 1 }
+        return "\(base) \(n)"
+    }
+
     /// SDK kind if known, else infer from detected objects.
     public static func effectiveKind(_ room: RoomModel) -> RoomKind {
         if let k = room.kind, k != .unidentified { return k }

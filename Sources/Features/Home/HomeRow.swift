@@ -69,7 +69,8 @@ struct HomeRow: View {
                     .foregroundStyle(Brand.textSecondary)
                     .frame(width: 34, height: 34)
                     .background(Brand.surfaceAlt, in: Circle())
-                    .contentShape(Circle())
+                    .frame(width: 44, height: 44)        // 44 pt touch target
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("Ev seçenekleri")
         }

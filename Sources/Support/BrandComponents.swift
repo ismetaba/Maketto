@@ -166,6 +166,9 @@ struct CircleIconButton: View {
     var body: some View {
         Button(action: action) {
             CircleIcon(systemName: systemName, size: size, dark: dark)
+                // Small icons keep a 44 pt touch target.
+                .frame(width: max(size, 44), height: max(size, 44))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
@@ -264,6 +267,7 @@ struct RoomChip: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -317,6 +321,7 @@ extension View {
         alert(title, isPresented: isPresented) {
             TextField(placeholder, text: text)
             Button("Kaydet", action: onSave)
+                .disabled(text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("Vazgeç", role: .cancel) {}
         }
     }
@@ -329,7 +334,7 @@ extension View {
             Button("Evi Sil", role: .destructive, action: onDelete)
             Button("Vazgeç", role: .cancel) {}
         } message: {
-            Text("Tüm odaları ve versiyonlarıyla birlikte silinir. Bu işlem geri alınamaz.")
+            Text("Ev, tüm odaları ve sürümleriyle birlikte silinir. Bu işlem geri alınamaz.")
         }
     }
 }

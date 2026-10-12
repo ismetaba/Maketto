@@ -61,7 +61,7 @@ struct HomeScanScreen: View {
             )
         case .failed(let message):
             messageScreen(icon: "exclamationmark.triangle", title: "Tarama başarısız",
-                          body: message, button: "Tekrar dene",
+                          body: message, button: "Tekrar Dene",
                           secondary: "Vazgeç", secondaryAction: { router.pop() }) {
                 scanner.reset()
             }

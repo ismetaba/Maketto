@@ -131,6 +131,11 @@ struct VersionHistorySheet: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
+                    Text("v\(version.number)")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color(hex: 0x453516))
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Brand.gold, in: Capsule())
                     Text(version.label)
                         .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(Brand.textPrimary)
@@ -160,6 +165,7 @@ struct VersionHistorySheet: View {
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("Sürüm \(version.number), \(version.label)\(version.isCurrent ? ", güncel" : "")")
         .accessibilityHint(version.isCurrent ? "" : "Bu sürüme dönmek için dokunun")
     }
 

@@ -21,10 +21,15 @@ struct WholeHomePlanView: View {
     var selectedRoomID: UUID?
     /// External camera; when nil (thumbnails, previews) an internal one is used.
     var camera: PlanCamera?
+    /// Screen margins hidden by floating chrome. When set, a newly selected
+    /// room whose centre would sit under the chrome (e.g. its own card) is
+    /// panned into the free area.
+    var focusInsets: EdgeInsets?
     /// Called with the tapped room, or nil when empty paper was tapped.
     var onSelect: ((UUID?) -> Void)?
 
     @State private var fallbackCamera = PlanCamera()
+    @State private var viewSize: CGSize = .zero
     @GestureState private var pinch = PinchState()
     @GestureState private var dragLive: CGSize = .zero
     @Environment(\.colorScheme) private var colorScheme
@@ -60,7 +65,10 @@ struct WholeHomePlanView: View {
                         selectRoom(at: value.location, in: geo.size)
                     }
                 )
+                .onAppear { viewSize = geo.size }
+                .onChange(of: geo.size) { _, size in viewSize = size }
             }
+            .onChange(of: selectedRoomID) { _, id in reveal(id) }
         } else {
             Canvas { context, size in
                 draw(context, size: size, zoom: 1, pan: .zero)
@@ -84,6 +92,24 @@ struct WholeHomePlanView: View {
                     .updating($dragLive) { value, state, _ in state = value.translation }
                     .onEnded { value in cam.commitPan(value.translation) }
             )
+    }
+
+    /// Pan so the selected room's centre lands in the chrome-free area, but
+    /// only when it would otherwise be hidden (no needless map motion).
+    private func reveal(_ id: UUID?) {
+        guard let id, let insets = focusInsets, viewSize.width > 0, viewSize.height > 0,
+              let room = rooms.first(where: { $0.id == id }),
+              let centre = PlanGeometry.roomCenter(room),
+              let base = PlanGeometry.fit(rooms, in: viewSize, padding: 28, maxScale: 120) else { return }
+        let free = CGRect(x: insets.leading, y: insets.top,
+                          width: viewSize.width - insets.leading - insets.trailing,
+                          height: viewSize.height - insets.top - insets.bottom)
+        guard free.width > 60, free.height > 60 else { return }
+        let p = base.composed(in: viewSize, zoom: cam.zoom, pan: cam.pan).apply(centre)
+        guard !free.insetBy(dx: 12, dy: 12).contains(p) else { return }
+        withAnimation(.maketto) {
+            cam.commitPan(CGSize(width: free.midX - p.x, height: free.midY - p.y))
+        }
     }
 
     private func selectRoom(at point: CGPoint, in size: CGSize) {

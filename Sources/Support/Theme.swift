@@ -53,8 +53,9 @@ enum Brand {
     static let surfaceAlt      = Color(light: bone100,         dark: Color(hex: 0x101A14))
     static let card           = Color(light: Color(hex: 0xFFFFFF), dark: Color(hex: 0x1B2620))
     static let textPrimary    = Color(light: ink,             dark: Color(hex: 0xF7F2EA))
-    static let textSecondary  = Color(light: muted,           dark: Color(hex: 0xAFC4A9))
-    static let textFaint      = Color(light: mutedSoft,       dark: Color(hex: 0x7E907F))
+    // Secondary / faint text are tuned for ≥4.5:1 contrast on every surface.
+    static let textSecondary  = Color(light: Color(hex: 0x62675B), dark: Color(hex: 0xAFC4A9))
+    static let textFaint      = Color(light: Color(hex: 0x6A6F63), dark: Color(hex: 0x8A9C8B))
     static let hairline       = Color(light: borderLine,      dark: Color(hex: 0x2A3A2E))
     static let accent         = clay
 

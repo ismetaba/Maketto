@@ -258,7 +258,7 @@ struct RoomDetailView: View {
                             .background(Brand.gold, in: Capsule())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Sürüm \(document.versionNumber) / \(document.versionCount)")
+                    .accessibilityLabel("Sürüm \(document.versionNumber) / \(document.versionCount), \(document.versionLabel)")
                     .accessibilityHint("Sürüm geçmişini açar")
                 }
             }
@@ -757,7 +757,7 @@ struct RoomDetailView: View {
     }
 
     private func sharePlan(_ document: RoomDocument) {
-        let subtitle = "\(MeasurementFormat.squareMeters(PlanGeometry.area(of: document.room))) · \(document.versionLabel)"
+        let subtitle = "\(MeasurementFormat.squareMeters(PlanGeometry.area(of: document.room))) · v\(document.versionNumber) · \(document.versionLabel)"
         guard let url = PlanExporter.planImage(rooms: [document.room], furniture: document.furniture,
                                                title: document.room.name, subtitle: subtitle) else {
             notice = .exportFailed

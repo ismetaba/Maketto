@@ -73,9 +73,7 @@ final class RoomStore {
             let pose = straighteningPose(of: home)
             let models = orderedRooms(of: home).compactMap { room -> RoomModel? in
                 guard let snap = currentSnapshot(of: room) else { return nil }
-                var rm = HomeGeometry.transform(snap.room, by: pose)
-                rm.name = room.name
-                return rm
+                return displayRoom(snap, of: room, pose: pose)
             }
             let area = models.reduce(0.0) { $0 + PlanGeometry.area(of: $1) }
             return HomeSummary(id: home.id, name: home.name, createdAt: home.createdAt,
@@ -90,8 +88,7 @@ final class RoomStore {
         let pose = straighteningPose(of: home)
         let placed = orderedRooms(of: home).compactMap { room -> PlacedRoom? in
             guard let version = room.currentVersion, let snap = snapshot(of: version) else { return nil }
-            var rm = HomeGeometry.transform(snap.room, by: pose)
-            rm.name = room.name                    // Room.name is the source of truth
+            let rm = displayRoom(snap, of: room, pose: pose)
             return PlacedRoom(id: room.id, name: room.name, kind: rm.kind,
                               sortIndex: room.sortIndex, room: rm,
                               furniture: HomeGeometry.transform(snap.furniture, by: pose),
@@ -105,15 +102,14 @@ final class RoomStore {
         guard let room = room(with: roomID), let current = room.currentVersion,
               let snap = snapshot(of: current) else { return nil }
         let pose = room.home.map { straighteningPose(of: $0) } ?? .identity
-        var rm = HomeGeometry.transform(snap.room, by: pose)
-        rm.name = room.name
+        let rm = displayRoom(snap, of: room, pose: pose)
         let chronological = room.versions.sorted(by: Self.chronological)
         let number = (chronological.firstIndex { $0.id == current.id } ?? 0) + 1
         return RoomDocument(
             roomID: room.id, room: rm,
             furniture: HomeGeometry.transform(snap.furniture, by: pose),
             versionID: current.id, versionNumber: number,
-            versionCount: chronological.count, versionLabel: current.label,
+            versionCount: chronological.count, versionLabel: Self.displayLabel(current.label),
             canDeleteRoom: (room.home?.rooms.count ?? 1) > 1
         )
     }
@@ -128,9 +124,9 @@ final class RoomStore {
         let chronological = room.versions.sorted(by: Self.chronological)
         let infos = chronological.enumerated().compactMap { i, version -> VersionInfo? in
             guard let snap = snapshot(of: version) else { return nil }
-            var rm = HomeGeometry.transform(snap.room, by: pose)
-            rm.name = room.name
-            return VersionInfo(id: version.id, label: version.label, createdAt: version.createdAt,
+            let rm = displayRoom(snap, of: room, pose: pose)
+            return VersionInfo(id: version.id, label: Self.displayLabel(version.label),
+                               createdAt: version.createdAt,
                                number: i + 1, isCurrent: version.id == room.currentVersion?.id,
                                room: rm, furniture: HomeGeometry.transform(snap.furniture, by: pose))
         }
@@ -174,6 +170,15 @@ final class RoomStore {
 
     private func currentSnapshot(of room: Room) -> VersionSnapshot? {
         room.currentVersion.flatMap(snapshot(of:))
+    }
+
+    /// A stored room as every screen sees it: straightened, named by its Room,
+    /// and identified by the Room's id — so map taps, chips, cards and
+    /// navigation all speak the same id (a scan's RoomModel.id differs).
+    private func displayRoom(_ snap: VersionSnapshot, of room: Room, pose: Pose2D) -> RoomModel {
+        var rm = HomeGeometry.transform(snap.room, by: pose).withID(room.id)
+        rm.name = room.name                    // Room.name is the source of truth
+        return rm
     }
 
     /// The whole home's straightening pose (raw scan frame → display frame).
@@ -221,7 +226,7 @@ final class RoomStore {
             guard let payload = try? JSONEncoder().encode(snapshot), !payload.isEmpty else {
                 return abort()
             }
-            let version = Version(label: Self.versionLabel(1), payload: payload)
+            let version = Version(label: Self.firstVersionLabel, payload: payload)
             version.room = room
             room.versions.append(version)
             room.currentVersion = version
@@ -258,7 +263,7 @@ final class RoomStore {
         guard let payload = try? JSONEncoder().encode(snapshot), !payload.isEmpty else { return false }
 
         let trimmed = (label ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let version = Version(label: trimmed.isEmpty ? nextVersionLabel(for: room) : trimmed,
+        let version = Version(label: trimmed.isEmpty ? Self.editVersionLabel : trimmed,
                               payload: payload)
         version.room = room
         let previousCurrent = room.currentVersion
@@ -412,14 +417,16 @@ final class RoomStore {
 
     // MARK: - Version labels
 
-    static func versionLabel(_ number: Int) -> String { "Sürüm \(number)" }
+    /// Versions are NUMBERED by position (v1, v2… — shown everywhere) and
+    /// NAMED by label; default names carry no number, so deleting a version
+    /// can never make a name and its number disagree.
+    static let firstVersionLabel = "İlk tarama"
+    static let editVersionLabel = "Düzenleme"
 
-    /// "Sürüm N" for the next N not already used by this room.
-    private func nextVersionLabel(for room: Room) -> String {
-        let used = Set(room.versions.map(\.label))
-        var n = room.versions.count + 1
-        while used.contains(Self.versionLabel(n)) { n += 1 }
-        return Self.versionLabel(n)
+    /// Labels written by early builds ("Version 3") read in Turkish.
+    static func displayLabel(_ label: String) -> String {
+        guard label.hasPrefix("Version "), Int(label.dropFirst(8)) != nil else { return label }
+        return "Sürüm " + label.dropFirst(8)
     }
 
     // MARK: - Model file storage
