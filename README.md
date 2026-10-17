@@ -5,7 +5,7 @@ Ev tasarım uygulaması. Bu repo şu an **F0 (app shell) + F1 (RoomPlan tarama)*
 - **F0:** taranmış odaların listesi + SwiftData kalıcılığı (Home → Room → Version snapshot iskeleti) + NavigationStack/Router.
 - **F1:** RoomPlan ile oda tarama → Apple `CapturedRoom` kendi taşınabilir `RoomModel`'imize çevrilir → duvar uzunlukları mezurayla doğrulama ekranında gösterilir → oda kaydedilir.
 
-Sonraki milestone'lar: 2D plan editörü, eşya yerleştirme, native 3D, Gemini render, tam versiyonlama. (Bkz. `PLAN.md`.)
+Sonraki milestone'lar: 2D plan editörü, eşya yerleştirme, native 3D, Gemini render, tam versiyonlama. (Bkz. `PLAN.md`; iş-zaman çizelgesi: `GANTT.md`.)
 
 ## Gereksinimler
 - Xcode 26.5+ (iOS 17.0 deployment target)
