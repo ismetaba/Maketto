@@ -8,7 +8,7 @@
 | **Proje Konusu** | RGB-D ve LiDAR ile SLAM |
 | **Proje Adı** | Maketto |
 | **Proje Amacı** | Mobil cihazın RGB-D kamerası ve LiDAR sensörüyle iç mekânın haritasını çıkaran, kullanıcının bu harita üzerindeki konumunu belirleyen ve seçilen duvar için yapay zekâ destekli tasarım önerisi üreten bir mobil uygulama geliştirmek |
-| **Proje Süresi** | 07.10.2026 – 01.01.2027 |
+| **Proje Süresi** | 07.10.2026 – 25.12.2026 |
 | **Referans Çalışma** | Yan, Y.; Li, J.; Liu, Q.; Lv, S.; Wu, Q. *RGB-D SLAM: A Review of Methods and Performance Trade-Offs for Different Requirements.* Sensors 2026, 26(11), 3513. [doi:10.3390/s26113513](https://doi.org/10.3390/s26113513) |
 
 ## Gantt Şeması
@@ -35,12 +35,6 @@ gantt
     İP-8 Harita Üzerinde Konum Belirleme        :2026-12-14, 5d
     İP-9 Yapay Zekâ Destekli Duvar Tasarımı     :2026-12-14, 12d
     İP-10 Test, Değerlendirme ve Sunum          :2026-12-21, 5d
-
-    section Ders Takvimi
-    Faz-1 Teslimi                               :milestone, 2026-10-16, 0d
-    Faz-2 Teslimi                               :milestone, 2026-11-09, 0d
-    Ara Sınav Haftası                           :crit, 2026-11-16, 5d
-    Faz-3 Proje Sunumu                          :crit, 2026-12-28, 5d
 ```
 
 Rapor ve sunumlarda kullanılmak üzere görsel: [`docs/gantt.png`](docs/gantt.png)
@@ -59,12 +53,3 @@ Rapor ve sunumlarda kullanılmak üzere görsel: [`docs/gantt.png`](docs/gantt.p
 | İP-8 | Harita üzerinde konum belirleme (relokalizasyon) | 12 | 14.12.2026 – 18.12.2026 | Kullanıcının plan üzerindeki konumu ve bakış yönü |
 | İP-9 | Duvar görüntüsü üzerinden yapay zekâ destekli tasarım | 12–13 | 14.12.2026 – 25.12.2026 | Seçilen duvar için tasarım önerisi |
 | İP-10 | Sistem testleri, performans değerlendirmesi ve sunum hazırlığı | 13 | 21.12.2026 – 25.12.2026 | Test raporu ve çalışır durumda uygulama |
-
-## Teslim Takvimi
-
-| Aşama | Hafta | Tarih | Kapsam |
-|---|:---:|---|---|
-| Faz-1 | 3 | 16.10.2026 | Gantt şeması ve proje planı |
-| Faz-2 | 7 | 09.11.2026 | Mock-up, Use Case ve Activity diyagramları, fonksiyonel tanım |
-| Ara Sınav | 8 | 16.11.2026 – 20.11.2026 | Bu hafta proje çalışmasına ara verilir |
-| Faz-3 | 14 | 28.12.2026 – 01.01.2027 | Çalışır durumdaki uygulamanın teslimi ve yüz yüze sunumu |
