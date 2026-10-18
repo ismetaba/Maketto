@@ -23,21 +23,24 @@ gantt
     weekday monday
 
     section Planlama ve Tasarım
-    İP-1 Konu Belirleme, Literatür ve Planlama  :2026-10-07, 10d
+    İP-1 Konu Belirleme, Literatür ve Planlama  :done, 2026-10-07, 10d
     İP-2 Gereksinim Analizi ve Sistem Mimarisi  :2026-10-19, 5d
     İP-3 Arayüz Tasarımı (Mock-up) ve Altyapı   :2026-10-26, 12d
     İP-4 Use Case ve Activity Diyagramları      :2026-11-02, 5d
+    M1 Tasarım Tamamlandı                       :milestone, 2026-11-07, 0d
 
     section Geliştirme
     İP-5 Veri Toplama ve Sensör Kalibrasyonu    :2026-11-09, 5d
-    İP-6 SLAM ile İç Mekân Haritalama           :2026-11-23, 12d
+    İP-6 SLAM ile İç Mekân Haritalama           :2026-11-16, 19d
+    M2 İç Mekân Haritası Hazır                  :milestone, 2026-12-05, 0d
     İP-7 2B Kat Planı Çıkarımı ve Düzenleme     :2026-12-07, 5d
     İP-8 Harita Üzerinde Konum Belirleme        :2026-12-14, 5d
     İP-9 Yapay Zekâ Destekli Duvar Tasarımı     :2026-12-14, 12d
     İP-10 Test, Değerlendirme ve Sunum          :2026-12-21, 5d
+    M3 Uygulama Tamamlandı                      :milestone, 2026-12-26, 0d
 ```
 
-Rapor ve sunumlarda kullanılmak üzere görsel: [`docs/gantt.png`](docs/gantt.png)
+Gri çubuk tamamlanan iş paketini, elmas işareti kilometre taşını gösterir. Rapor ve sunumlarda kullanılmak üzere görsel: [`docs/gantt.png`](docs/gantt.png)
 
 ## İş Paketleri
 
@@ -48,8 +51,16 @@ Rapor ve sunumlarda kullanılmak üzere görsel: [`docs/gantt.png`](docs/gantt.p
 | İP-3 | Kullanıcı arayüzü tasarımı (mock-up) ve uygulama altyapısının kurulması | 5–6 | 26.10.2026 – 06.11.2026 | Ekran tasarımları ve ekranlar arası geçişler |
 | İP-4 | Use Case ve Activity diyagramlarının hazırlanması | 6 | 02.11.2026 – 06.11.2026 | UML diyagramları ve fonksiyonel tanım raporu |
 | İP-5 | RGB-D ve LiDAR verilerinin toplanması, sensör kalibrasyonu | 7 | 09.11.2026 – 13.11.2026 | Kalibre edilmiş tarama veri seti |
-| İP-6 | SLAM algoritmasının geliştirilmesi ve iç mekânın haritalanması | 9–10 | 23.11.2026 – 04.12.2026 | İç mekânın üç boyutlu haritası |
+| İP-6 | SLAM algoritmasının geliştirilmesi ve iç mekânın haritalanması | 8–10 | 16.11.2026 – 04.12.2026 | İç mekânın üç boyutlu haritası |
 | İP-7 | Haritadan iki boyutlu kat planı çıkarımı ve plan düzenleme modülü | 11 | 07.12.2026 – 11.12.2026 | Ölçülü ve düzenlenebilir kat planı |
 | İP-8 | Harita üzerinde konum belirleme (relokalizasyon) | 12 | 14.12.2026 – 18.12.2026 | Kullanıcının plan üzerindeki konumu ve bakış yönü |
 | İP-9 | Duvar görüntüsü üzerinden yapay zekâ destekli tasarım | 12–13 | 14.12.2026 – 25.12.2026 | Seçilen duvar için tasarım önerisi |
 | İP-10 | Sistem testleri, performans değerlendirmesi ve sunum hazırlığı | 13 | 21.12.2026 – 25.12.2026 | Test raporu ve çalışır durumda uygulama |
+
+## Kilometre Taşları
+
+| No | Kilometre Taşı | Tarih | Kapsadığı İş Paketleri |
+|---|---|---|---|
+| M1 | Tasarım tamamlandı | 06.11.2026 | İP-1 – İP-4 |
+| M2 | İç mekân haritası hazır | 04.12.2026 | İP-5 – İP-6 |
+| M3 | Uygulama tamamlandı | 25.12.2026 | İP-7 – İP-10 |
